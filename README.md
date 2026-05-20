@@ -22,7 +22,7 @@ We are always looking to improve our workflows. If you find a bug, have a featur
 This project is licensed under the **MIT License**.
 
 ```text
-Copyright (c) 2026 Stockholm Environment Institute - Global Canopy
+Copyright (c) 2026 Stockholm Environment Institute and Global Canopy
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
