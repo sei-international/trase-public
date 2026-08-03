@@ -16,28 +16,24 @@ We are always looking to improve our workflows. If you find a bug, have a featur
 * **Contributions:** Feel free to open an issue or submit a pull request in this repository.
 
 ---
+## Terms of Use
+Trase is committed to providing the best available data on global trade flows and associated information on the sustainability of commodity production, financing and trade. The data used by Trase comprises a collection of publicly available logistics, trade, export, financial and customs data, combined with social and environmental indicators from numerous sources. All of the data provided on Trase has been checked by us for quality and accuracy. However, we are aware that some data may have limitations, even when coming from official sources. Trase will continue to improve the quality and accuracy of its data, and is committed to communicating these limitations transparently.
 
-## License
+Portions of the data used in the SEI-PCS approach that underpins Trase have been purchased from other data providers, and carry restrictions on sharing in certain formats. In all cases, Trase respects relevant terms of use in its analysis and repackaging of data.
 
-This project is licensed under the **MIT License**.
+Disclaimer
+The information and analysis provided by Trase (including insights, data and visualisations hosted on our online platforms or otherwise provided by the Trase initiative and related partners) is provided on an “as is” basis. The user assumes the entire risk associated within any use made of this information and Trase (and its partners) do not accept any liability for damage arising from the use of the information, and makes no representation regarding the advisability or suitability of specific decisions made by the user.
 
-```text
-Copyright (c) 2026 Stockholm Environment Institute and Global Canopy
+Terms of use
+By accessing the Trase platform you have acknowledged and agreed to our Terms of Use.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+You may use charts, graphics, maps, and other representations of data on the Trase website, under the Creative Commons CC BY 4.0 license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Licensing is determined for each individual data set. Please refer to the licensing text of each data set for detailed information.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You may not imply that Trase authorises or endorses your use of the data, or use the Trase logo in conjunction with such use. If you would like to use the Trase logo, please contact us at info@trase.earth to request permission.
+
+Permissions & licensing
+If using charts, data, information, graphs or maps from Trase, attribution is required. You must clearly attribute the work to the Trase platform and provide a link to https://www.trase.earth or the specific page(s) of our website that the content is drawn from. This contributes to ensuring access to the latest available information, if the data is revised or additional relevant research is published.
+
+If you are using our data for commercial purposes, please get in touch with us at info@trase.earth
