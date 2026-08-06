@@ -1,13 +1,25 @@
-# Trase Cocoa Cooperative Disclosure Integrator
+# Tool to Combine Your Own Cooperative Data with the Trase Cocoa Cooperatives Dataset
 
 This open-source Python tool allows users to integrate their own cooperative disclosure data with the official Trase cooperative base map for Côte d'Ivoire.
 
-Trase map: https://trase.earth/explore/facilities-data/map?facilityTypeId=cote-d-ivoire-cocoa-cooperatives 
+* [Trase Côte d'Ivoire Cocoa Cooperative Map](https://trase.earth/explore/facilities-data/map?facilityTypeId=cote-d-ivoire-cocoa-cooperatives)
 
-It takes a standard CSV of cooperative disclosures, cleans and normalizes the text, and performs fuzzy matching against the official Trase GeoJSON. It updates existing cooperatives by appending the disclosing buyer, and geographically processes brand-new cooperatives by assigning them to the correct administrative departments before adding them to the map.
+It takes a standard CSV of cooperative disclosures for cooperatives in Côte d'Ivoire, cleans and normalizes the text, and performs fuzzy matching against the official Trase GeoJSON. It updates existing cooperatives by appending the disclosing buyer, and geographically processes brand-new cooperatives by assigning them to the correct administrative departments before adding them to the map.
 
-## Getting new cooperative information
+## Sourcing and Preparing New Cooperative Data
 
+Many major cocoa buyers publish their cooperative supply chain data annually. We encourage you to use this tool to integrate the latest available information into the Trase cooperative map.
+
+**1. Where to find data**
+You can usually extract this data from company sustainability dashboards, direct CSV downloads, or annual supply chain reports. For example:
+* [Barry Callebaut Traceability Dashboard](https://www.barry-callebaut.com/en-SE/sustainability/our-sustainable-raw-materials/transparency-and-traceability-our-cocoa-supply-chain)
+* [Nestlé Responsible Sourcing Disclosure (PDF)](https://www.nestle.com/sites/default/files/2025-09/responsible-sourcing-disclosure-cocoa.pdf)
+
+**2. Formatting your data**
+To use the code in this directory, you must format the information you find online so it matches our **Input Data Schema** (detailed below). Standardizing your column headers ensures your data can be seamlessly merged with the existing Trase dataset. 
+
+**3. Expanding to other countries**
+While this specific tool is configured for Côte d'Ivoire, you can adapt the codebase to map supply chains in other countries simply by swapping out the Trase base map and the administrative boundaries file (`ci_departments.geojson`).
 
 ## Folder Structure
 
@@ -43,6 +55,7 @@ For the script to successfully process your cooperative disclosures, your CSV fi
 | **`COMPANY`** | String | Yes | The name of the buyer, trader, or manufacturer disclosing this cooperative (e.g., *NESTLE*). *(Alternative accepted header: `BUYER`)* |
 | **`LATITUDE`** | Float | Yes** | The Y-coordinate (e.g., `6.356`). |
 | **`LONGITUDE`** | Float | Yes** | The X-coordinate (e.g., `-3.909`). |
+| **`YEAR`** | Integer | Yes** | The disclosure year for the cooperative flow. If left blank, the script will fall back to the --default-year provided in the terminal. |
 
 > **Notes on Requirements:**
 > * **\*** You must provide **at least one** naming column (`SUPPLIER_FULLNAME` or `SUPPLIER_ABRVNAME`). If both are provided, the script will prioritize the full name for matching.
@@ -67,9 +80,11 @@ This example file includes several common data scenarios and formatting quirks t
 Once your `data/` folder is populated with the three required files, navigate to the project directory in your terminal and run:
 
 ```bash
-python update_trase_coops.py
+python update_trase_coops.py --default-year 2026
 
 ```
+
+If your file is not named user_disclosure_data.csv, the script will automatically pause and prompt you to type in the correct filename.
 
 ## Output
 
