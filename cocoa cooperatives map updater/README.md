@@ -21,6 +21,17 @@ To use the code in this directory, you must format the information you find onli
 **3. Expanding to other countries**
 While this specific tool is configured for Côte d'Ivoire, you can adapt the codebase to map supply chains in other countries simply by swapping out the Trase base map and the administrative boundaries file (`ci_departments.geojson`).
 
+### Required Base Files and Data Sources
+
+Both required `.geojson` reference files are **included in this repository by default** inside the `data/` folder, pre-populated with the latest Trase cocoa cooperatives data release (as of August 2026).
+
+* **`ci_departments.geojson`**
+Included in the repository. Provides the official administrative boundaries for Côte d'Ivoire used for spatial joins.
+* **`cote-d-ivoire-cocoa-cooperatives.geojson`**
+Included in the repository (most recent data as of August 2026).
+* **Updating the Base Map:** If you wish to fetch a newer version of the base map in the future, visit the [Trase Cocoa Cooperatives Map](https://trase.earth/explore/facilities-data/map?facilityTypeId=cote-d-ivoire-cocoa-cooperatives) and click the **Download** button. Save the downloaded GeoJSON file into your local `data/` directory using the same filename.
+
+  
 ## Folder Structure
 
 Before running the script, ensure your working directory is structured exactly like this:
