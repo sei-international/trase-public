@@ -2,6 +2,8 @@
 
 This open-source Python tool allows users to integrate their own cooperative disclosure data with the official Trase cooperative base map for Côte d'Ivoire.
 
+Trase map: https://trase.earth/explore/facilities-data/map?facilityTypeId=cote-d-ivoire-cocoa-cooperatives 
+
 It takes a standard CSV of cooperative disclosures, cleans and normalizes the text, and performs fuzzy matching against the official Trase GeoJSON. It updates existing cooperatives by appending the disclosing buyer, and geographically processes brand-new cooperatives by assigning them to the correct administrative departments before adding them to the map.
 
 ## Getting new cooperative information
