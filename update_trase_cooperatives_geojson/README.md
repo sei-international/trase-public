@@ -83,7 +83,7 @@ This example file includes several common data scenarios and formatting quirks t
 *   **Row 2 (`2 AD`) — Tests an Exact Match:** This exactly matches ID 2 for the year 2019 in the base map. The script will simply append "CHOCO CORP" to its existing 2019 entry.
 *   **Row 3 (`CNF`) — Tests a Brand New Cooperative:** This does not exist in the base map. The script will use the coordinates to calculate its department, assign it a brand new ID, and plot it on the map for 2024.
 *   **Row 4 (`2A SCCOPS`) — Tests Fuzzy Matching:** The official name is "COOPERATIVE LES AGRICULTEURS D'AKOUPE", but here there is a slight typo/variation. The script catches the typo dynamically and maps it successfully to ID 3.
-*   **Row 5 (`EPO`) — Tests the French Comma Bug:** This is a brand new cooperative, but the coordinates use commas instead of decimals (`6,150`, `-7,250`). The script automatically fixes the formatting and plots it correctly.
+*   **Row 5 (`EPO`) — Tests for decimal formatting from differing regions:** This is a brand new cooperative, but the coordinates use commas instead of decimals (`6,150`, `-7,250`). The script automatically fixes the formatting and plots it correctly.
 
 ## How to Run
 
