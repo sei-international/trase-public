@@ -31,7 +31,6 @@ Included in the repository. Provides the official administrative boundaries for 
 Included in the repository (most recent data as of August 2026).
 * **Updating the Base Map:** If you wish to fetch a newer version of the base map in the future, visit the [Trase Cocoa Cooperatives Map](https://trase.earth/explore/facilities-data/map?facilityTypeId=cote-d-ivoire-cocoa-cooperatives) and click the **Download** button. Save the downloaded GeoJSON file into your local `data/` directory using the same filename.
 
-  
 ## Folder Structure
 
 Before running the script, ensure your working directory is structured exactly like this:
@@ -41,7 +40,7 @@ my_project/
 ├── update_trase_coops.py
 ├── requirements.txt
 └── data/
-    ├── user_disclosure_data.csv                 <-- Your data
+    ├── user_disclosure.csv                      <-- Your data
     ├── cote-d-ivoire-cocoa-cooperatives.geojson <-- Trase Base Map
     └── ci_departments.geojson                   <-- Ivorian Departments Reference Map
 
@@ -66,7 +65,7 @@ For the script to successfully process your cooperative disclosures, your CSV fi
 | **`COMPANY`** | String | Yes | The name of the buyer, trader, or manufacturer disclosing this cooperative (e.g., *NESTLE*). *(Alternative accepted header: `BUYER`)* |
 | **`LATITUDE`** | Float | Yes** | The Y-coordinate (e.g., `6.356`). |
 | **`LONGITUDE`** | Float | Yes** | The X-coordinate (e.g., `-3.909`). |
-| **`YEAR`** | Integer | Yes** | The disclosure year for the cooperative flow. If left blank, the script will fall back to the --default-year provided in the terminal. |
+| **`YEAR`** | Integer | No | The disclosure year for the cooperative flow. If left blank, the script will fall back to the --fallback-year provided in the terminal. |
 
 > **Notes on Requirements:**
 > * **\*** You must provide **at least one** naming column (`SUPPLIER_FULLNAME` or `SUPPLIER_ABRVNAME`). If both are provided, the script will prioritize the full name for matching.
@@ -91,8 +90,7 @@ This example file includes several common data scenarios and formatting quirks t
 Once your `data/` folder is populated with the three required files, navigate to the project directory in your terminal and run:
 
 ```bash
-python update_trase_coops.py --default-year 2026
-
+python create_updated_trase_cooperatives_geojson.py --fallback-year 2026
 ```
 
 If your file is not named user_disclosure_data.csv, the script will automatically pause and prompt you to type in the correct filename.
