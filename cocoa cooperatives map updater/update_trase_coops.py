@@ -75,7 +75,7 @@ def main():
         description="Integrate user cooperative data with the Trase Earth base map."
     )
     parser.add_argument(
-        "--default-year",
+        "--fallback-year",
         type=int,
         required=True,
         help="Fallback year if the CSV is missing a YEAR column (e.g., 2024)",
