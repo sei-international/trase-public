@@ -8,7 +8,8 @@ This repository contains copies of some of the code used by **[Trase](https://tr
 
 * **Open Data Portal:** Access and download our datasets directly at [trase.earth/open-data](https://trase.earth/open-data).
 * **Methodology:** To learn more about our data models and systems, visit [trase.earth/methodology](https://trase.earth/methodology). You can also find detailed, dataset-specific methodology documents provided alongside each open dataset.
-
+* **Zenodo:** See standalone datasets and archived datasets on our Zenodo page at [zenodo.org/communities/trase](https://zenodo.org/communities/trase).
+  
 ## Get in Touch & Contribute
 
 We are always looking to improve our workflows. If you find a bug, have a feature request, or want to contribute:
