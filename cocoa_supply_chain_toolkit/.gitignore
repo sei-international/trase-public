@@ -8,3 +8,4 @@ __pycache__/
 # reports rendered from .Rmd files
 *.html
 *_files/
+tests/data_branch_coverage/

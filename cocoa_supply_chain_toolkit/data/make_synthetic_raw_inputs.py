@@ -52,11 +52,12 @@ def written(p):
 
 
 # --------------------------------------------------------------------------- #
-# Regions: the real (public) department boundaries, copied from the example
+# Regions: the open-licensed department boundaries, copied from the example
 # --------------------------------------------------------------------------- #
 shutil.rmtree(OUT, ignore_errors=True)
 os.makedirs(OUT)
-shutil.copy(os.path.join(SRC, "regions", "departments.geojson"), path("regions", "departments.geojson"))
+for f in ("departments.geojson", "SOURCE.md"):
+    shutil.copy(os.path.join(SRC, "regions", f), path("regions", f))
 depts = gpd.read_file(os.path.join(SRC, "regions", "departments.geojson"))
 pts = depts.to_crs(32630).representative_point().to_crs(4326)
 depts["LAT"], depts["LON"] = pts.y.round(5), pts.x.round(5)
@@ -243,9 +244,18 @@ rows = [{"COMPANY": l["BUYER"], "DISCL_COUNTRY_NAME": "IVORY COAST", "DISCL_TRAD
          "TRADER_NAME": l["TRADER_NAME"], "IS_CAM_V3": False, "IS_JRC": False} for l in links23]
 pd.DataFrame(rows, columns=disc_cols).to_csv(p := path("supplier_map", "last_year", "company_disclosures_2023.csv"),
                                              sep=";", index=False); written(p)
+# Mark every made-up disclosure as synthetic in its file name. The supplier-map
+# script reads SYNTHETIC_<name> when the real file <name> is not there.
+for folder in (DISC, path("supplier_map", "work", "step1_by_company", "x")[:-2]):
+    for root, _, files in os.walk(folder):
+        for f in files:
+            os.rename(os.path.join(root, f), os.path.join(root, "SYNTHETIC_" + f))
 open(path("supplier_map", "README.txt"), "w").write(
-    NOTE + ".\nCompany names are used only because the example script reads each file by name;\n"
-    "the cooperatives and figures in these files are invented.\n")
+    NOTE + ".\nEvery file whose name starts with SYNTHETIC_ is invented. The company names\n"
+    "only show which real disclosure each file stands in for; the cooperatives,\n"
+    "locations and figures are made up and are not what those companies published.\n"
+    "Put the real files here under their original names (without SYNTHETIC_) and\n"
+    "the supplier-map script will use them instead.\n")
 
 # --------------------------------------------------------------------------- #
 # Raw customs records (for input_preparation/trade/), built from the ready-made

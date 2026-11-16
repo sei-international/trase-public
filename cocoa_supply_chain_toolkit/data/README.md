@@ -2,7 +2,7 @@
 
 `synthetic_cote_divoire/` holds **made-up** inputs with the same files, columns and formats as the real Côte d'Ivoire inputs. The companies, cooperatives, shipments, farmer numbers and production figures are fictional, and model results from them mean nothing. The data exist so every script can run and you can inspect each step.
 
-The one real file is `regions/departments.geojson`: the public department boundaries of Côte d'Ivoire, derived from GADM.
+The one real file is `regions/departments.geojson`: the department boundaries of Côte d'Ivoire, built from geoBoundaries data under a CC BY 3.0 IGO licence. `regions/SOURCE.md` gives the source and the attribution to keep if you reuse it.
 
 `make_synthetic_data.py` regenerates the folder (Python standard library only, fixed random seed):
 
@@ -41,6 +41,6 @@ python3 data/make_synthetic_raw_inputs.py     # needs pandas, geopandas, openpyx
 | `earth_engine_exports/` | the CSVs that `cocoa_deforestation_metrics.js` exports to Google Drive | `deforestation_metrics/reshape_earth_engine_exports.py` |
 | `regions/` | a copy of the real department boundaries | all of the above |
 
-The company names in the fake disclosures are there only because the example script reads each company's file by name. **Their contents are invented**: they are not what those companies published.
+Every fake disclosure has a file name starting with `SYNTHETIC_`. The company names in them only show which real disclosure each file stands in for. **Their contents are invented**: they are not what those companies published. When you add the real files under their original names (without `SYNTHETIC_`), the supplier-map script uses those instead.
 
 The examples write their results into this folder too, next to their inputs. Running `make_synthetic_raw_inputs.py` again resets it.

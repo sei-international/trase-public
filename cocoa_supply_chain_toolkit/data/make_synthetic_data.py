@@ -6,8 +6,9 @@ and formats as the real inputs, so that every script in the package runs end to
 end. The numbers, companies, cooperatives and shipments are fictional and the
 model results produced from them mean nothing.
 
-The one exception is regions/departments.geojson, which holds the real
-(public) department boundaries of Côte d'Ivoire. This script does not write it.
+The one exception is regions/departments.geojson, which holds real
+department boundaries of Côte d'Ivoire (from geoBoundaries, CC BY 3.0 IGO; see
+regions/SOURCE.md). This script does not write it.
 
 Usage (from the package's top folder):
     python3 data/make_synthetic_data.py   # writes into data/synthetic_cote_divoire/

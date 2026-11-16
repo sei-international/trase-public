@@ -17,7 +17,7 @@
 #'
 #' Load Trase fonts into R. Gives a warning if they can't be loaded correctly.
 #' NOTE: Running this script requires prior installation of the Trase fonts
-#' on your machine. They can be downloaded from the Trase Dropbox.
+#' on your machine. If they are not installed, R's default fonts are used.
 #'
 #' # Visual Guides:
 #' Titles in Merriweather Light
@@ -37,13 +37,13 @@ load_trase_fonts <- function() {
     tryCatch(
       windowsFonts(DecimaMonoPro = windowsFont("DecimaMonoPro")),
       windowsFonts(Merriweather = windowsFont("Merriweather Light")),
-      error = function(e) warning("Unable to load all Trase fonts, have you downloaded them from Dropbox and installed on your Operating System?\n", paste0(e))
+      error = function(e) warning("Unable to load all Trase fonts, are they installed on your computer?\n", paste0(e))
     )
   } else {
     tryCatch(
       extrafont::font_import(pattern = "Decima", prompt = FALSE),
       extrafont::font_import(pattern = "Merriweather", prompt = FALSE),
-      error = function(e) warning("Unable to load all Trase fonts, have you downloaded them from Dropbox and installed on your Operating System?\n", paste0(e))
+      error = function(e) warning("Unable to load all Trase fonts, are they installed on your computer?\n", paste0(e))
     )
 
     extrafont::loadfonts()
@@ -103,8 +103,7 @@ trase_palettes[["divergent"]] <- c(
 trase_map_border <- trase_palettes[["grey"]][4]
 trase_country_background <- trase_palettes[["grey"]][1]
 
-## Palettes from Trase 2024, added by Valentin
-# from p. 85 of the Trase 2024 brand guidelines (internal)
+## Additional Trase 2024 colours
 trase_palettes[["TraseGreen_TraseGray_TraseRed"]] <- c("#BBFFEC", "#19404C", "#FF6A5F")
 trase_palettes[["no_data"]] <- "#E2EAE7"
 trase_palettes[["y_axis"]] <- "#839A8C"

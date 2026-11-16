@@ -12,8 +12,8 @@
 # names, convert CFA values to USD where needed, derive HS6 and tonnes, flag and
 # fix price/volume outliers, and run upload checks.
 # Note: this script is interactive in places (it prints tables for manual
-# review and contains manual fixes for specific shipments by SHPMT_ID). Those
-# fixes only make sense for the real 2024 data.
+# review). There is a placeholder near the end for fixing individual shipments
+# by SHPMT_ID, if your own data need it.
 # =============================================================================
 
 # Script to pre-process 2024 IVORY COAST CDs
@@ -546,13 +546,16 @@ cd_df %>%
   geom_boxplot() 
 
 cd_df %>% filter(FPU_OUTLIER) %>% View()
-# 36 outliers this year! Either extremely expensive or cheap. 
+# Look at how many shipments are flagged and whether they are unusually expensive or cheap.
 
 # Inspect volume outliers 
 cd_df %>% filter(VOL_OUTLIER) %>% View()
+# Check whether the largest shipments are also price outliers. If their value per tonne
+# is normal, large volumes are plausible and need no fixing.
 
 # Volume outliers that are also price outliers 
 cd_df %>% filter(VOL_OUTLIER & FPU_OUTLIER) %>% View()
+# Shipments flagged on both volume and price deserve a closer look.
 
 # Price outliers that are also CIF outliers 
 cd_df %>% filter(CIF_OUTLIER & FPU_OUTLIER) %>% View()
@@ -571,7 +574,20 @@ cd_df %>%
     PERC_VOL = sum(NET_WEIGHT_TON) / unique(TOTAL_VOL) * 100,
     PERC_CIF_USD = sum(CIF_USD) / unique(TOTAL_CIF_USD) * 100
   )
-# If less than 1% of toal in every HS code --> do nothing
+# If the flagged shipments are a small share of the total (e.g. under 1% per HS code),
+# leaving them as they are has little effect on the results.
+
+
+
+## Fixing individual outliers (optional) --------------------
+# If a few shipments have a value or weight that is clearly wrong (for example a
+# misplaced decimal point), fix them here by shipment ID, and write down why.
+# Decide which of value or weight is more credible from the number of bags,
+# typical shipment sizes for that HS code, and the exporter's usual volumes.
+# Example:
+# cd_df <- cd_df %>%
+#   mutate(NET_WEIGHT_TON = if_else(SHPMT_ID == 123, 250, NET_WEIGHT_TON),
+#          CIF_USD_PER_TON = CIF_USD / NET_WEIGHT_TON)
 
 
 # Export ------------------------------------------------------------------
