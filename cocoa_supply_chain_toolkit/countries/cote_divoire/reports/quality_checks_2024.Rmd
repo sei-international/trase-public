@@ -1,0 +1,2233 @@
+---
+title: "Côte d'Ivoire cocoa 2024: quality checks on the supply-chain results"
+author: "Valentin Guye and Niamh French"
+date: "24-11-2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+<!--
+Côte d'Ivoire-specific quality-assurance report on the model results.
+Reads the results written by run_model.R (output/cote_divoire/) and extra
+comparison datasets from <data_dir>/quality_check_data/. It is a useful EXAMPLE of what to check, but it names Ivorian departments and
+companies, so a new country will need its own version.
+Render from the toolkit's top folder:
+  rmarkdown::render("countries/cote_divoire/reports/quality_checks_2024.Rmd", knit_root_dir = getwd())
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+
+library(tidyverse)
+library(knitr)
+library(sf)
+library(ggpubr)
+#library(traseviz)
+library(viridis)
+library(scales)
+library(kableExtra)
+library(readr)
+# 1. KEEP THIS COMMENTED OUT (It crashes because you don't have the font files)
+#load_trase_fonts() 
+
+theme_update(text = element_text(family = "sans"))
+
+# Toolkit functions and Côte d'Ivoire settings
+if (!exists("TOOLKIT_ROOT")) TOOLKIT_ROOT <- normalizePath(getwd())
+source(file.path(TOOLKIT_ROOT, "model", "load.R"))
+source(file.path(TOOLKIT_ROOT, "countries", "cote_divoire", "config.R"))
+source(file.path(TOOLKIT_ROOT, "countries", "cote_divoire", "reports", "plot_theme.R"))  # plot colours
+results_dir <- Sys.getenv("MODEL_OUTPUT_DIR", file.path(TOOLKIT_ROOT, "output", "cote_divoire"))
+result_path <- function(...) file.path(results_dir, ...)
+input_path <- function(...) file.path(config$data_dir, ...)
+
+
+```
+
+```{r load data, include = FALSE}
+# TRADE LINKS ----------------------------
+#all linked cocoa providers and their links to the supply chain actors (not cd links)
+cocoa_providers <- 
+  readRDS(result_path("intermediate", "supplier_links_with_draws_2024.rds"))
+
+#all volumes exported per exporter, per destination country, per cocoa seller  
+volume_val_exporteroriginal_country_producer <-
+  readRDS(result_path("intermediate", "flows_with_draws_2024.rds")) %>%
+  # back to the working names this report uses (see model/R/summarise_results.R)
+  rename(GEOCODE = REGION_CODE, COOPACRONYM_AANAME = SUPPLIER_SHORT_NAME,
+         COOPNAME_AADENOMINATION = SUPPLIER_NAME, FLOW_ID = LINK_ID,
+         EXPORTER_ORIGINAL = EXPORTER, EXPORTER_GROUP_CLEAN = EXPORTER_GROUP,
+         PRODUCT_B_CODE = HS_CODE,
+         COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution = BEAN_EQUIVALENT_KG_DRAWS,
+         COOP_SOURCED_DIRECT_VAL_distribution = VALUE_USD_DRAWS) %>%
+  filter(! GEOCODE == "UNKNOWN") %>%
+  # add convenient variable
+  mutate(IS_EXPCOOP = grepl(pattern = "[(]COOPERATIVE[)]", EXPORTER_GROUP_CLEAN))
+
+
+# TRADE DATA ----------------------------
+# /!\ IMPORTANT to use model output and not trade_data, the latter does not merge exporter and importer columns into EXPORTER_GROUP_CLEAN. 
+output_summarised <- 
+  read_csv(
+  result_path(config$output_file),
+  col_types = cols(HS6 = col_character(),
+                   HS_CODE = col_character())
+) %>%
+  # back to the working names this report uses
+  rename(any_of(setNames(names(OUTPUT_COLUMN_NAMES), OUTPUT_COLUMN_NAMES))) %>%
+  rename(LVL4_TRASE_ID_PROD = REGION_ID, LVL4_NAME_PROD = REGION_NAME) %>%
+  mutate(LVL4_TRASE_ID_LH = LVL4_TRASE_ID_PROD, LVL4_NAME_LH = LVL4_NAME_PROD,
+         ORIGIN = ifelse(SOURCING_TYPE == "INDIRECT", "UNKNOWN", LVL4_NAME_PROD))
+
+# number of Monte Carlo draws in the results
+N_DRAWS <- nrow(volume_val_exporteroriginal_country_producer$COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution[[1]])
+
+# Model inputs, under the names this report was written with
+inputs <- readRDS(result_path("intermediate", "model_inputs_2024.rds"))
+cam_long <- inputs$supplier_links
+trade_data <- inputs$trade %>% rename(CIF_USD = VALUE_USD)
+cef_cocoa <- inputs$bean_equivalence
+kit_farm_production <- inputs$farm_production %>% rename(cocoa_prod_total_kgs = PRODUCTION_KG)
+
+# Overread civ_departments, because we need LVL_3_NAME variable in Section 7. 
+# 'Départements' (eq. to districts) of Ivory Coast
+civ_departments <- read_sf(input_path("regions", "departments.geojson")) %>%
+  select(LVL_4_CODE, LVL_4_NAME, LVL_3_NAME, geometry)
+
+
+# COCOA PRODUCTION (updated for 2024) ----------------------------
+# //////////////// ALL THESE WILL NEED TO BE UPDATED ONCE WE HAVE INDICATOR MATRIX UPDATE \\\\\\\\\\\\\\\\\\\\\\\
+cocoa_production_pg <- read_delim(
+  (input_path("quality_check_data", "eth_cocoa_production_pg_2019_oct22.csv")),
+  delim = ";") %>%
+  rename(COCOA_PRODUCTION_KG = eth_production_2019_kg) %>%
+  mutate(YEAR = 2024)
+icco_2024_tonnes <- 1890442 #in tonnes, according to /www.fao.org/faostat
+
+#COCOA AREA ----------------------------
+cocoa_area_ha_pg <- read_delim(
+    (input_path("quality_check_data", "eth_area_under_cocoa_ha_civ_oct22.csv")),
+    delim = ","
+  ) %>%
+  select(GEOCODE = LVL_4_CODE, COCOA_AREA_HA = sum) 
+
+
+# COCOA DRIVEN DEFORESTATION ----------------------------
+# NOT (YET) AVAILABLE FOR 2024
+
+#list of the exporting cooperatives' names ----------------------------
+# As of 2k20, these are handled differently. Retrieve their names from model output
+
+expcooplist <- c(
+  "ECOOKIM",
+  volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN %>% 
+  grep(pattern = "[(]COOPERATIVE[)]", value = TRUE) %>% unique() %>% 
+  gsub(pattern = " [(]COOPERATIVE[)]", replacement = "")
+)
+
+volume_val_exporteroriginal_country_producer <- 
+  volume_val_exporteroriginal_country_producer %>% 
+  mutate(EXPORTER_GROUP_CLEAN = gsub(pattern = " [(]COOPERATIVE[)]", replacement = "", EXPORTER_GROUP_CLEAN))
+
+cocoa_providers <- 
+  cocoa_providers %>% 
+  mutate(BUYER = gsub(pattern = " [(]COOPERATIVE[)]", replacement = "", BUYER))
+
+output_summarised <- 
+  output_summarised %>% 
+  mutate(EXPORTER_GROUP_CLEAN = gsub(pattern = " [(]COOPERATIVE[)]", replacement = "", EXPORTER_GROUP_CLEAN))
+
+trade_data <- 
+  trade_data %>% 
+  mutate(EXPORTER_GROUP_CLEAN = gsub(pattern = " [(]COOPERATIVE[)]", replacement = "", EXPORTER_GROUP_CLEAN))
+
+trader_bean_eq_vol <- 
+  trade_data %>%
+  group_by(YEAR, EXPORTER_GROUP_CLEAN) %>% 
+  summarise(TRADER_BEQ_VOLUME_EXPORTED = sum(BEAN_EQUIVALENT_VOLUME)) %>%
+  ungroup()
+
+# cost insurance and freight (CIF) value per trader
+trader_val <- 
+  trade_data %>%
+  group_by(YEAR, EXPORTER_GROUP_CLEAN) %>%
+  summarise(CIF_USD = sum(CIF_USD)) %>%
+  ungroup()
+
+# MANUFACTURERS -----------------
+manufacturer_names <- 
+cocoa_providers$DISCLOSURE_SOURCE[!cocoa_providers$DISCLOSURE_SOURCE %in% output_summarised$EXPORTER_GROUP_CLEAN] %>% 
+  unique() %>% 
+  sort()
+
+# ZDC --------------------------------
+zdc <- read_delim(
+    (input_path("quality_check_data", "ZDC_collection_2020.csv")),
+    delim = ";",
+    skip = 1
+  ) %>%
+  filter(Commodity == "Cocoa",
+         Country == "Cote d’Ivoire",
+         Year == 2019) %>% # THIS HAS NOT BEEN UPDATED AFTER 2019
+  mutate(EXPORTER_GROUP_CLEAN = company_group(Exporter, config$rules$company_groups)) %>%
+  select(EXPORTER_GROUP_CLEAN, ZDC) %>%
+  distinct()
+
+# Trader names, filtered to either disclosing/CFI traders or exporting coops, ordered by volumes
+
+ordered_traders <- 
+  output_summarised %>% 
+  filter(EXPORTER_GROUP_CLEAN %in% cocoa_providers$TRADER_NAME) %>% 
+  summarize(.by = EXPORTER_GROUP_CLEAN,
+            TOTAL = sum(VOLUME_BEAN_EQUIVALENT)) %>% 
+  arrange(-TOTAL) %>% 
+  pull(EXPORTER_GROUP_CLEAN) 
+
+ordered_expcoop <- 
+  output_summarised %>% 
+  filter(EXPORTER_GROUP_CLEAN %in% expcooplist) %>% 
+  summarize(.by = EXPORTER_GROUP_CLEAN,
+            TOTAL = sum(VOLUME_BEAN_EQUIVALENT)) %>% 
+  arrange(-TOTAL) %>% 
+  pull(EXPORTER_GROUP_CLEAN) 
+
+ordered_all <- 
+  output_summarised %>% 
+  filter(EXPORTER_GROUP_CLEAN %in% cocoa_providers$TRADER_NAME | EXPORTER_GROUP_CLEAN %in% expcooplist) %>% 
+  summarize(.by = EXPORTER_GROUP_CLEAN,
+            TOTAL = sum(VOLUME_BEAN_EQUIVALENT)) %>% 
+  arrange(-TOTAL) %>% 
+  pull(EXPORTER_GROUP_CLEAN)
+
+# Country names ordered by volume
+ordered_countries <- 
+  output_summarised %>% 
+  summarize(.by = COUNTRY_OF_DESTINATION,
+            TOTAL = sum(VOLUME_BEAN_EQUIVALENT)) %>% 
+  arrange(-TOTAL) %>% 
+  pull(COUNTRY_OF_DESTINATION) 
+
+
+```
+
+```{r load comtrade data, include = FALSE}
+# COMTRADE data 
+# This is Comtrade data for exports from Côte d'Ivoire to the world in 2019:2024 years, HS codes 1801, 1803, 1804, 1805, 180100, 180310, 180320, 180400, 180500, 180600. 
+
+ct <- readr::read_csv((input_path("quality_check_data", "comtrade_civ_cocoa_exports_2019_2024.csv")))
+```
+
+
+# 1. Agregate trade 
+
+```{r}
+# names(ct)
+ct1 <- 
+  ct %>% 
+  select(refYear, cmdCode, partnerDesc, qty, altQty, cifvalue) %>% 
+  mutate(
+    qty = case_when(
+      qty == 0 ~ altQty, 
+      TRUE ~ qty
+    ),
+    Qty_ktonnes = qty / 1e6,
+    Cifvalue_kusd = cifvalue / 1e3,
+    cmdCode = as.character(cmdCode),
+    cmdCode = case_when(
+      cmdCode == "1803" ~ "180300", 
+      TRUE ~ cmdCode
+    ),
+    partnerDesc = case_when(
+      partnerDesc == "USA" ~ "UNITED STATES", 
+      TRUE ~ toupper(partnerDesc)
+    )) %>% 
+  select(-altQty, -qty, -cifvalue)
+
+cdsum <-
+  rbind(
+  trade_data %>% 
+    summarize(.by = c(YEAR, HS6),
+              NET_WEIGHT_KTONNES = sum(VOLUME_RAW) / 1e6, # use volume raw to match Comtrade
+              CIF_KUSD = sum(CIF_USD) / 1e3) %>% 
+  mutate(COUNTRY_OF_DESTINATION = "WORLD"),
+  
+  trade_data %>% 
+    summarize(.by = c(YEAR, HS6, COUNTRY_OF_DESTINATION),
+              NET_WEIGHT_KTONNES = sum(VOLUME_RAW) / 1e6, # use volume raw to match Comtrade
+              CIF_KUSD = sum(CIF_USD) / 1e3)
+  )
+
+# Merge pre-processed customs data and comtrade. 
+comp <- 
+  inner_join(ct1, 
+             cdsum, 
+             by = join_by(refYear == YEAR, cmdCode == HS6, partnerDesc == COUNTRY_OF_DESTINATION))
+
+comp <- 
+  comp %>% 
+  mutate(CT_MINUS_CD_VOL = Qty_ktonnes - NET_WEIGHT_KTONNES, 
+         CT_MINUS_CD_VAL = Cifvalue_kusd - CIF_KUSD, 
+         REL_DIFF_VOL_PCT = 100 * CT_MINUS_CD_VOL / NET_WEIGHT_KTONNES, 
+         REL_DIFF_VAL_PCT = 100 * CT_MINUS_CD_VAL / CIF_KUSD)
+
+comp %>% 
+  arrange(cmdCode, -NET_WEIGHT_KTONNES) %>% 
+  kable(digits = 2,
+        col.names = c("Year", "HS code", "Import region", 
+                      "Comtrade volume (000 tonnes)", "Comtrade FOB (000 USD)", 
+                      "Customs volume (000 tonnes)", "Customs CIF (000 USD)", 
+                      "Volume: Comtrade - customs", "Value: Comtrade - customs", 
+                      "Volume: diff. rel. Comtrade (%)", "Value: diff. rel. Comtrade (%)")
+    # align = c("l", "l", "r", "r", "r")
+    ) %>%
+    kable_paper(full_width = F)
+
+```
+**Comparison between customs data and Comtrade data. **
+
+The total cocoa production we linked to the 2024 trade data was `r icco_2024_tonnes/1000` K tonnes (still an estimate by ICCO). The 2024 exported bean equivalent cocoa volume was `r format(sum(output_summarised$VOLUME_BEAN_EQUIVALENT)/1000000, digits = 4)` K tonnes. As such the exported volume accounted for `r format(100 * (sum(output_summarised$VOLUME_BEAN_EQUIVALENT)/1000000) / (icco_2024_tonnes/1000) , digits = 4)` percent of the production.  
+
+The cocoa exports were handled by `r length(unique(output_summarised$EXPORTER_CLEAN))` exporters, part of `r length(unique(output_summarised$EXPORTER_GROUP_CLEAN))` exporter groups. We could (partially) link the sourcing of `r length(unique(volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN))` of these exporter groups to departments. These `r length(unique(volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN))` exporter groups exported `r format(100 * sum(output_summarised %>% filter(EXPORTER_GROUP_CLEAN %in% unique(volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN)) %>% select(VOLUME_BEAN_EQUIVALENT)) / sum(output_summarised$VOLUME_BEAN_EQUIVALENT), digits = 4)` percent of the total exported bean equivalent cocoa volume. 
+
+Out of this, `r length(unique(expcooplist)) - 1` individual exporting cooperatives and the network of cooperatives ECOOKIM exported `r format(100 * sum(output_summarised %>% filter(EXPORTER_GROUP_CLEAN %in% expcooplist) %>% select(VOLUME_BEAN_EQUIVALENT)) / sum(output_summarised$VOLUME_BEAN_EQUIVALENT), digits = 4)` percent of the total exported bean equivalent cocoa volume. 
+
+The proportions of the trade that could be traced to departments are the following:
+
+## 1.0 Overall percentage of trade that has been traced
+  
+```{r include = FALSE}
+total_volume_val_traded <- 
+  output_summarised %>%
+  group_by(YEAR) %>%
+  summarise(TOTAL_VOLUME_TRADED_TONNES = sum(VOLUME_BEAN_EQUIVALENT)/1000,
+            TOTAL_VAL_TRADED = sum(CIF_USD))
+
+total_traced_volume_val_percentage <-
+  volume_val_exporteroriginal_country_producer %>%
+  #remove links to which no geocode could be linked
+  filter(!is.na(GEOCODE)) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution, 
+                  COOP_SOURCED_DIRECT_VAL_distribution)) %>%
+  #sum over the different traders, destinations and HS codes to obtain 1000 values per geocode
+  group_by(YEAR, GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ, NUM_COOP_SOURCED_DIRECT_VAL) %>%
+  summarise(GEOCODE_TOTAL_DIRECT_VOLUME = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ),
+            GEOCODE_TOTAL_DIRECT_VAL = sum(COOP_SOURCED_DIRECT_VAL)) %>%
+  #sum over the different geocodes to obtain 1000 values of the total direct volume
+  group_by(YEAR, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ, NUM_COOP_SOURCED_DIRECT_VAL) %>%
+  summarise(CIV_TOTAL_DIRECT_VOLUME_TONNES = sum(GEOCODE_TOTAL_DIRECT_VOLUME)/1000,
+            CIV_TOTAL_DIRECT_VAL = sum(GEOCODE_TOTAL_DIRECT_VAL)) %>%
+  left_join(total_volume_val_traded, by = "YEAR") %>%
+  mutate(PERCENTAGE_TRACED_VOLUME = 100 * CIV_TOTAL_DIRECT_VOLUME_TONNES / TOTAL_VOLUME_TRADED_TONNES,
+         NUM_PERCENTAGE_TRACED_VOLUME = NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ,
+         PERCENTAGE_TRACED_VAL = 100 * CIV_TOTAL_DIRECT_VAL / TOTAL_VAL_TRADED,
+         NUM_PERCENTAGE_TRACED_VAL = NUM_COOP_SOURCED_DIRECT_VAL) %>%
+  rename(NUM_CIV_TOTAL_DIRECT_VOLUME_TONNES = NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ,
+         NUM_CIV_TOTAL_DIRECT_VAL = NUM_COOP_SOURCED_DIRECT_VAL) %>%
+  arrange(as.numeric(NUM_CIV_TOTAL_DIRECT_VOLUME_TONNES)) %>%
+  #Calculate the mean and 95% confidence interval of these 1000 values of total direct volume
+  group_by(YEAR) %>%
+  mutate(MEAN_CIV_TOTAL_DIRECT_VOLUME_TONNES = mean(CIV_TOTAL_DIRECT_VOLUME_TONNES),
+         CI_CIV_TOTAL_DIRECT_VOLUME_TONNES = qt(0.95/2+0.5, length(CIV_TOTAL_DIRECT_VOLUME_TONNES)-1) *
+           (sd(CIV_TOTAL_DIRECT_VOLUME_TONNES)/sqrt(length(CIV_TOTAL_DIRECT_VOLUME_TONNES))),
+         MEAN_PERCENTAGE_TRACED_VOLUME = mean(PERCENTAGE_TRACED_VOLUME),
+         CI_PERCENTAGE_TRACED_VOLUME = qt(0.95/2+0.5, length(PERCENTAGE_TRACED_VOLUME)-1) *
+           (sd(PERCENTAGE_TRACED_VOLUME)/sqrt(length(PERCENTAGE_TRACED_VOLUME))),
+         MEAN_CIV_TOTAL_DIRECT_VAL = mean(CIV_TOTAL_DIRECT_VAL),
+         CI_CIV_TOTAL_DIRECT_VAL = qt(0.95/2+0.5, length(CIV_TOTAL_DIRECT_VAL)-1) *
+           (sd(CIV_TOTAL_DIRECT_VAL)/sqrt(length(CIV_TOTAL_DIRECT_VAL))),
+         MEAN_PERCENTAGE_TRACED_VAL = mean(PERCENTAGE_TRACED_VAL),
+         CI_PERCENTAGE_TRACED_VAL = qt(0.95/2+0.5, length(PERCENTAGE_TRACED_VAL)-1) *
+           (sd(PERCENTAGE_TRACED_VAL)/sqrt(length(PERCENTAGE_TRACED_VAL)))) %>%
+  nest(CIV_TOTAL_DIRECT_VOLUME_TONNES_distribution = 
+         c(CIV_TOTAL_DIRECT_VOLUME_TONNES, NUM_CIV_TOTAL_DIRECT_VOLUME_TONNES),
+       PERCENTAGE_TRACED_VOLUME_distribution = c(PERCENTAGE_TRACED_VOLUME, NUM_PERCENTAGE_TRACED_VOLUME),
+       CIV_TOTAL_DIRECT_VAL_distribution = c(CIV_TOTAL_DIRECT_VAL, NUM_CIV_TOTAL_DIRECT_VAL),
+       PERCENTAGE_TRACED_VAL_distribution = c(PERCENTAGE_TRACED_VAL, NUM_PERCENTAGE_TRACED_VAL))
+```
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+total_traced_volume_val_percentage %>%
+  mutate(
+    MEAN_CIV_TOTAL_INDIRECT_VOLUME_TONNES = 
+      TOTAL_VOLUME_TRADED_TONNES - MEAN_CIV_TOTAL_DIRECT_VOLUME_TONNES,
+    CI_CIV_TOTAL_INDIRECT_VOLUME_TONNES = NA,
+    MEAN_CIV_TOTAL_INDIRECT_VAL = TOTAL_VAL_TRADED - MEAN_CIV_TOTAL_DIRECT_VAL,
+    CI_CIV_TOTAL_INDIRECT_VAL = NA
+  ) %>%
+  select(YEAR, 
+         MEAN_CIV_TOTAL_DIRECT_VOLUME_TONNES, CI_CIV_TOTAL_DIRECT_VOLUME_TONNES,
+         MEAN_CIV_TOTAL_INDIRECT_VOLUME_TONNES, CI_CIV_TOTAL_INDIRECT_VOLUME_TONNES,
+         MEAN_CIV_TOTAL_DIRECT_VAL, CI_CIV_TOTAL_DIRECT_VAL,
+         MEAN_CIV_TOTAL_INDIRECT_VAL, CI_CIV_TOTAL_INDIRECT_VAL,
+         MEAN_PERCENTAGE_TRACED_VOLUME, CI_PERCENTAGE_TRACED_VOLUME,
+         MEAN_PERCENTAGE_TRACED_VAL, CI_PERCENTAGE_TRACED_VAL) %>%
+  gather(TRADE_TYPE, VALUE, MEAN_CIV_TOTAL_DIRECT_VOLUME_TONNES:CI_CIV_TOTAL_INDIRECT_VAL) %>%
+  mutate(DATA_TYPE = TRADE_TYPE,
+         CI_VS_MEAN = TRADE_TYPE,
+         VAL_VS_VOLUME = TRADE_TYPE) %>%
+  mutate(
+    TRADE_TYPE = grepl("UNTRACED|INDIRECT", TRADE_TYPE),
+    TRADE_TYPE = case_when(
+      TRADE_TYPE == TRUE ~ "Untraced",
+      TRUE ~ "Traced"
+    ),
+    VAL_VS_VOLUME = grepl("VOLUME", VAL_VS_VOLUME),
+    VAL_VS_VOLUME = case_when(
+      VAL_VS_VOLUME == TRUE ~ "Volume",
+      TRUE ~ "Value"
+    ),
+    DATA_TYPE = case_when(
+      grepl("TOTAL.*VOLUME", DATA_TYPE) ~ "Traded volume (1000 tonnes)",
+      grepl("TOTAL.*VAL", DATA_TYPE) ~ "Traded CIF (1000 USD)"
+    )
+  ) %>%
+  separate(CI_VS_MEAN, c("VALUE_TYPE")) %>%
+  spread(VALUE_TYPE, VALUE) %>%
+  mutate(
+    DATA_TYPE = factor(DATA_TYPE, levels = c("Traded volume (1000 tonnes)", "Traded CIF (1000 USD)")),
+    TRADE_TYPE = factor(TRADE_TYPE, levels = c("Untraced", "Traced"))
+  ) %>%
+  ungroup() %>%
+  mutate(
+    TEXT = case_when(
+      VAL_VS_VOLUME == "Volume" & TRADE_TYPE == "Traced" ~ 
+        paste(format(MEAN_PERCENTAGE_TRACED_VOLUME, digits = 2, nsmall = 2), 
+              format(CI_PERCENTAGE_TRACED_VOLUME, digits = 1, nsmall = 2), 
+              sep=" +- "),
+      VAL_VS_VOLUME == "Value" & TRADE_TYPE == "Traced" ~ 
+        paste(format(MEAN_PERCENTAGE_TRACED_VAL, digits = 2, nsmall = 2), 
+              format(CI_PERCENTAGE_TRACED_VAL, digits = 1, nsmall = 2), 
+              sep=" +- ")
+    )
+  ) %>%
+  ggplot(aes(YEAR, MEAN/1000, fill = TRADE_TYPE, label = TEXT)) +
+  geom_bar(stat = "identity", position = position_stack()) +
+  geom_text(vjust = -1) +
+  facet_wrap(~ DATA_TYPE, scales = "free_y") +
+  theme_minimal() + 
+  
+  labs(fill = "Trade type")+
+  
+  geom_errorbar(aes(x = YEAR, ymin = (MEAN-CI)/1000, 
+                    ymax = (MEAN+CI)/1000), width = .2,
+                linetype = "solid") +
+  guides(fill = guide_legend(reverse = TRUE)) + 
+  labs(x = "Trade years", y = "") +
+  theme(panel.border = element_blank(), axis.title = element_blank(), 
+        axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        legend.position = "top")
+
+```
+
+## 1.1. From which departments are these traced volumes sourced?
+
+```{r echo = FALSE, message = FALSE}
+total_traced_volume_geocode <-
+  volume_val_exporteroriginal_country_producer %>%
+  #remove links to which no geocode could be linked
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  #sum over the different traders, destinations and HS codes to obtain 1000 values per geocode
+  group_by(GEOCODE, YEAR, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ)/1000) %>%
+  group_by(GEOCODE, YEAR) %>%
+  summarise(
+    MEAN_TRACED_VOLUME_GEOCODE_TONNES = mean(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES),
+    CI_TRACED_VOLUME_GEOCODE_TONNES = qt(0.95/2+0.5, length(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES)-1) *
+      (sd(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES)/sqrt(length(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES)))
+  ) %>%
+  ungroup()
+
+# st_as_sf(total_traced_volume_geocode %>%
+#    full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE"))) %>%
+#   ggplot() +
+#   geom_sf(show.legend=TRUE,
+#           aes(fill = MEAN_TRACED_VOLUME_GEOCODE_TONNES / 1000)) +
+#   theme_minimal() + 
+#   # scale_fill_gradientn(colors = trase_palettes[["linear"]], guide_legend(title = "Cocoa tonnes\n(1000)")) +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank()) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('COCOA TONNES'),
+#                      direction = -1,
+#                      label = unit_format(unit = "K"))
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(total_traced_volume_geocode %>%
+                            full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE"))),
+          aes(fill = MEAN_TRACED_VOLUME_GEOCODE_TONNES / 1000), 
+          col = NA) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm")) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('COCOA TONNES'),
+                     direction = -1,
+                     label = unit_format(unit = "K")) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+**San Pédro** houses `r format(100 * sum(cocoa_area_ha_pg %>% filter(GEOCODE == "CI-2.3.1_1") %>% select(COCOA_AREA_HA)) / sum(cocoa_area_ha_pg$COCOA_AREA_HA), digits = 3)` percent of the area under cocoa in the Côte d'Ivoire. The volumes traced to this department account for `r format(100 * sum(total_traced_volume_geocode %>% filter(GEOCODE == "CI-2.3.1_1") %>% select(MEAN_TRACED_VOLUME_GEOCODE_TONNES), na.rm = TRUE) / sum(total_traced_volume_geocode$MEAN_TRACED_VOLUME_GEOCODE_TONNES, na.rm = TRUE), digits = 3)` percent of the total traced volume and `r format(100 * sum(total_traced_volume_geocode %>% filter(GEOCODE == "CI-2.3.1_1") %>% select(MEAN_TRACED_VOLUME_GEOCODE_TONNES), na.rm = TRUE) / (sum(output_summarised$VOLUME_BEAN_EQUIVALENT)/1000), digits = 3)` percent of the total exported bean equivalent cocoa volume.  
+**Duékoué** houses `r format(100 * sum(cocoa_area_ha_pg %>% filter(GEOCODE == "CI-8.2.2_1") %>% select(COCOA_AREA_HA)) / sum(cocoa_area_ha_pg$COCOA_AREA_HA), digits = 3)` percent of the area under cocoa in the Côte d'Ivoire. The volumes traced to this department account for `r format(100 * sum(total_traced_volume_geocode %>% filter(GEOCODE == "CI-8.2.2_1") %>% select(MEAN_TRACED_VOLUME_GEOCODE_TONNES), na.rm = TRUE) / sum(total_traced_volume_geocode$MEAN_TRACED_VOLUME_GEOCODE_TONNES, na.rm = TRUE), digits = 3)` percent of the total traced volume and `r format(100 * sum(total_traced_volume_geocode %>% filter(GEOCODE == "CI-8.2.2_1") %>% select(MEAN_TRACED_VOLUME_GEOCODE_TONNES), na.rm = TRUE) / (sum(output_summarised$VOLUME_BEAN_EQUIVALENT)/1000), digits = 3)` percent of the total exported bean equivalent cocoa volume.  
+**Gagnoa** houses `r format(100 * sum(cocoa_area_ha_pg %>% filter(GEOCODE == "CI-5.1.1_1") %>% select(COCOA_AREA_HA)) / sum(cocoa_area_ha_pg$COCOA_AREA_HA), digits = 3)` percent of the area under cocoa in the Côte d'Ivoire. The volumes traced to this department account for `r format(100 * sum(total_traced_volume_geocode %>% filter(GEOCODE == "CI-5.1.1_1") %>% select(MEAN_TRACED_VOLUME_GEOCODE_TONNES), na.rm = TRUE) / sum(total_traced_volume_geocode$MEAN_TRACED_VOLUME_GEOCODE_TONNES, na.rm = TRUE), digits = 3)` percent of the total traced volume and `r format(100 * sum(total_traced_volume_geocode %>% filter(GEOCODE == "CI-5.1.1_1") %>% select(MEAN_TRACED_VOLUME_GEOCODE_TONNES), na.rm = TRUE) / (sum(output_summarised$VOLUME_BEAN_EQUIVALENT)/1000), digits = 3)` percent of the total exported bean equivalent cocoa volume.
+
+*(!cocoa area, not suitable cocoa area)*
+
+(there is a map of the departments and their names at the bottom of this document)
+and [this one](https://upload.wikimedia.org/wikipedia/commons/8/83/Map_of_C%C3%B4te_d%27Ivoire_Regions_and_Departments_with_Names_%28FR%29.svg) online is more readable. 
+
+
+-------------------------------------------------------------------------------------------------
+
+### 1.1.1. How do the traced volumes per department compare to the production volumes per department?
+
+```{r include = FALSE}
+total_traced_volume_geocode <-
+  volume_val_exporteroriginal_country_producer %>%
+  #remove links to which no geocode could be linked
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  #sum over the different traders, destinations and HS codes to obtain 1000 values per geocode
+  group_by(GEOCODE, YEAR, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ)/1000) %>%
+  group_by(GEOCODE, YEAR) %>%
+  summarise(
+    MEAN_TRACED_VOLUME_GEOCODE_TONNES = mean(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES),
+    CI_TRACED_VOLUME_GEOCODE_TONNES = qt(0.95/2+0.5, length(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES)-1) *
+      (sd(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES)/sqrt(length(GEOCODE_TOTAL_DIRECT_VOLUME_TONNES)))
+  )
+
+plot_production_minus_traced_volume <-
+  full_join(total_traced_volume_geocode,
+            cocoa_production_pg %>% mutate(YEAR = as.integer(YEAR),
+                                           COCOA_PRODUCTION_TONNES = COCOA_PRODUCTION_KG / 1000),
+            by = c("GEOCODE" = "LVL_4_CODE", "YEAR")) %>%
+  mutate(MEAN_TRACED_VOLUME_GEOCODE_TONNES = if_else(is.na(MEAN_TRACED_VOLUME_GEOCODE_TONNES),
+                                                0, MEAN_TRACED_VOLUME_GEOCODE_TONNES),
+         production_minus_traced = COCOA_PRODUCTION_TONNES - MEAN_TRACED_VOLUME_GEOCODE_TONNES) %>%
+  left_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+  mutate(largest = case_when(production_minus_traced > 0 ~ "Production larger",
+                             production_minus_traced < 0 ~ "Traced volume larger",
+                             production_minus_traced == 0 ~ "Same value"),
+         largest = factor(largest, levels = c("Same value", "Production larger", 
+                                              "Traced volume larger"))
+         ) 
+```
+
+```{r echo = FALSE}
+#FORMER VERSION, but using Trase style colours from the divergent palette:
+ggplot(st_as_sf(plot_production_minus_traced_volume)) + 
+  geom_sf(aes(fill = production_minus_traced, colour = largest), show.legend = TRUE) +
+  scale_fill_gradient2(
+    low = "#F85E6E", high = "#5EB920", mid = "#FFF0C2", 
+    name = "Production - Traced volume\n(tonnes)"
+  ) +
+  scale_color_manual(
+    values = c("#FFF0C2", "#5EB920", "#F85E6E"),
+    guide = guide_legend(title = "") 
+  ) +
+  facet_wrap(~YEAR) + 
+  labs(title = "Cocoa production minus traced cocoa volume, per department",
+       subtitle = "When green production > traced volume; when red traced volume > production") +
+  theme_minimal() +
+  theme(panel.background = element_blank()) +
+  coord_sf(datum = NA)
+
+#UGLY TRASE STYLE VERSION:
+
+# ggplot(plot_production_minus_traced_volume)  + 
+#   geom_sf(data = plot_production_minus_traced_volume$geometry, show.legend=TRUE, 
+#           aes(fill = plot_production_minus_traced_volume$production_minus_traced,
+#               colour =  plot_production_minus_traced_volume$largest)
+#           ) +
+#   scale_color_manual(values = trase_palettes[["categorical"]],
+#                       guide_legend(title = "")) +
+#   scale_fill_gradientn(colors = rev(trase_palettes[["divergent"]]),
+#                        guide_legend(title = "Production - Traced volume")) +
+#   facet_wrap(~plot_production_minus_traced_volume$YEAR) +
+#   labs(title = "Cocoa production minus traced cocoa volume, per department") +
+#   theme_minimal() + 
+#   theme(panel.background = element_blank()) + 
+#   coord_sf(datum = NA)
+```
+
+
+### 1.1.2. What's the excess in trade for those departments where the traded volume is higher than the produced volume? Which proportion is this of the total traded volume?
+
+```{r include = FALSE}
+traced_vs_production_excess <-
+  plot_production_minus_traced_volume %>%
+  #select(YEAR, GEOCODE, LVL_4_NAME, COCOA_PRODUCTION_TONNES, production_minus_traced) %>%
+  right_join(output_summarised %>%
+               group_by(YEAR) %>%
+               summarise(TOTAL_VOLUME_TRADED_TONNES = sum(VOLUME_BEAN_EQUIVALENT)/1000),
+             by = "YEAR") %>%
+  mutate(traced_excess = production_minus_traced * -1,
+         percentage_of_production = MEAN_TRACED_VOLUME_GEOCODE_TONNES / COCOA_PRODUCTION_TONNES * 100,
+         percentage_traced_excess = traced_excess / TOTAL_VOLUME_TRADED_TONNES * 100) %>%
+  filter(traced_excess > 0) 
+```
+
+```{r echo = FALSE}
+kable(
+  traced_vs_production_excess %>%
+    select(LVL_4_NAME, GEOCODE, traced_excess, percentage_of_production,
+           percentage_traced_excess) %>%
+    arrange(-percentage_traced_excess) %>%
+    mutate(traced_excess = format(traced_excess, scientific=F, digits = 3, nsmall = 3),
+           percentage_of_production = format(percentage_of_production, scientific=F, digits = 2, 
+                                             nsmall = 2),
+           percentage_traced_excess = format(percentage_traced_excess, scientific=F, digits = 1, 
+                                             nsmall = 2)),
+  col.names = c("department", "Geocode", "Excess volume (tonnes)", 
+                "Traced as % of produced", "% of traded volume"),
+  align = c("l", "l", "r", "r", "r")
+  ) %>%
+  kable_paper(full_width = F)
+```
+
+The excess in traced volumes compared to production volumes accounts for `r format(sum(traced_vs_production_excess$traced_excess),  digits = 2)` tonnes of cocoa, which represents a total of **`r format(sum(traced_vs_production_excess$percentage_traced_excess),  digits = 2)` percent of the total exported volumes**. This is an improvement compared to 2k19 and 2k20, and similar to 2021.   
+
+-------------------------------------------------------------------------------------------------
+
+# 2. Exporting companies
+
+## 2.1. Overall proportions and volumes of trade that have been traced per exporter in the customs data
+
+```{r include = FALSE}
+total_volume_val_exporter <- 
+  output_summarised %>%
+  group_by(YEAR, EXPORTER_GROUP_CLEAN) %>%
+  summarise(TRADER_BEQ_VOLUME_EXPORTED_TONNES = sum(VOLUME_BEAN_EQUIVALENT)/1000,
+            TOTAL_VAL_EXPORTED = sum(CIF_USD))
+
+percentage_traced_exporter_total <-
+  volume_val_exporteroriginal_country_producer %>%
+  #remove entries to which no geocode could be linked
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  #sum up over different xxx to get 1000 values per exporter_clean and geocode, convert to tonnes
+  group_by(YEAR, GEOCODE, EXPORTER_GROUP_CLEAN, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000 ) %>%
+  #calculate percentages traced per geocode
+  left_join(total_volume_val_exporter, by = c("EXPORTER_GROUP_CLEAN", "YEAR")) %>%
+  mutate(PERCENTAGE_TRACED_EXPORTER_GEOCODE = 
+           100 * GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TRADER_BEQ_VOLUME_EXPORTED_TONNES,
+         NUM_PERCENTAGE_TRACED_EXPORTER_GEOCODE = NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  #sum per trader over the geocodes (1000 values)
+  group_by(EXPORTER_GROUP_CLEAN, YEAR, NUM_PERCENTAGE_TRACED_EXPORTER_GEOCODE) %>%
+  summarise(PERCENTAGE_TRACED_EXPORTER_TOTAL = sum(PERCENTAGE_TRACED_EXPORTER_GEOCODE)) %>%
+  rename(NUM_PERCENTAGE_TRACED_EXPORTER_TOTAL = NUM_PERCENTAGE_TRACED_EXPORTER_GEOCODE) %>%
+  #calculate means and CI per trader & year
+  group_by(EXPORTER_GROUP_CLEAN, YEAR) %>%
+  mutate(
+    MEAN_PERCENTAGE_TRACED_EXPORTER_TOTAL = mean(PERCENTAGE_TRACED_EXPORTER_TOTAL),
+    CI_PERCENTAGE_TRACED_EXPORTER_TOTAL = qt(0.95/2+0.5, length(PERCENTAGE_TRACED_EXPORTER_TOTAL)-1) *
+              (sd(PERCENTAGE_TRACED_EXPORTER_TOTAL)/sqrt(length(PERCENTAGE_TRACED_EXPORTER_TOTAL)))) %>%
+  nest(PERCENTAGE_TRACED_EXPORTER_TOTAL_distribution = 
+         c(PERCENTAGE_TRACED_EXPORTER_TOTAL, NUM_PERCENTAGE_TRACED_EXPORTER_TOTAL))
+
+plot_percentage_traced <-
+  percentage_traced_exporter_total %>%
+  mutate(
+    MEAN_PERCENTAGE_UNTRACED_EXPORTER_TOTAL = 100 - MEAN_PERCENTAGE_TRACED_EXPORTER_TOTAL,
+  ) %>%
+  select(EXPORTER_GROUP_CLEAN, MEAN_PERCENTAGE_TRACED_EXPORTER_TOTAL, MEAN_PERCENTAGE_UNTRACED_EXPORTER_TOTAL,
+         CI_PERCENTAGE_TRACED_EXPORTER_TOTAL) %>%
+  #change to long format
+  gather(TRADE_TYPE, PERCENTAGE,
+         MEAN_PERCENTAGE_TRACED_EXPORTER_TOTAL:MEAN_PERCENTAGE_UNTRACED_EXPORTER_TOTAL,
+         factor_key=TRUE) %>%
+  mutate(TRADE_TYPE = gsub("MEAN_PERCENTAGE_TRACED_EXPORTER_TOTAL", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("MEAN_PERCENTAGE_UNTRACED_EXPORTER_TOTAL", "UNTRACED", TRADE_TYPE)) %>%
+  mutate(
+    CI_PERCENTAGE_TRACED_EXPORTER_TOTAL = 
+      ifelse(TRADE_TYPE == "TRACED", CI_PERCENTAGE_TRACED_EXPORTER_TOTAL, NA),
+    TRADE_TYPE = factor(TRADE_TYPE, levels = c("UNTRACED","TRACED"))
+    )
+```
+
+```{r include = FALSE}
+volume_traced_exporter_total <-
+  volume_val_exporteroriginal_country_producer %>%
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  group_by(EXPORTER_GROUP_CLEAN, YEAR, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(VOLUME_TRACED_EXPORTER_TOTAL_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ)/1000) %>%
+  left_join(total_volume_val_exporter, by = c("EXPORTER_GROUP_CLEAN", "YEAR")) %>%
+  mutate(VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES = 
+           TRADER_BEQ_VOLUME_EXPORTED_TONNES - VOLUME_TRACED_EXPORTER_TOTAL_TONNES) %>%
+  group_by(EXPORTER_GROUP_CLEAN, YEAR) %>%
+  summarise(
+    MEAN_VOLUME_TRACED_EXPORTER_TOTAL_TONNES = mean(VOLUME_TRACED_EXPORTER_TOTAL_TONNES),
+    CI_VOLUME_TRACED_EXPORTER_TOTAL_TONNES = qt(0.95/2+0.5,
+                                                length(VOLUME_TRACED_EXPORTER_TOTAL_TONNES)-1) *
+      (sd(VOLUME_TRACED_EXPORTER_TOTAL_TONNES)/sqrt(length(VOLUME_TRACED_EXPORTER_TOTAL_TONNES))),
+    MEAN_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES = mean(VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES),
+    CI_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES = qt(0.95/2+0.5,
+                                                  length(VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES)-1) *
+      (sd(VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES)/sqrt(length(VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES))))
+
+plot_volume_traced <-
+  volume_traced_exporter_total %>%
+  select(EXPORTER_GROUP_CLEAN, YEAR, MEAN_VOLUME_TRACED_EXPORTER_TOTAL_TONNES,
+         MEAN_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES,
+         CI_VOLUME_TRACED_EXPORTER_TOTAL_TONNES, CI_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES) %>%
+  #adapt CI for plotting; 
+  mutate(
+    CORRECTED_CI_TRACED = MEAN_VOLUME_TRACED_EXPORTER_TOTAL_TONNES,
+    CORRECTED_CI_UNTRACED = 
+      MEAN_VOLUME_TRACED_EXPORTER_TOTAL_TONNES + MEAN_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES
+      ) %>%
+  gather(TRADE_TYPE, VOLUME,
+         MEAN_VOLUME_TRACED_EXPORTER_TOTAL_TONNES:CORRECTED_CI_UNTRACED,
+         factor_key=TRUE) %>%
+  mutate(TRADE_TYPE_TWO = TRADE_TYPE) %>%
+  separate(TRADE_TYPE_TWO, c("CI")) %>%
+  mutate(TRADE_TYPE = gsub("MEAN_VOLUME_TRACED_EXPORTER_TOTAL_TONNES", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("MEAN_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES", "UNTRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CI_VOLUME_TRACED_EXPORTER_TOTAL_TONNES", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CI_VOLUME_UNTRACED_EXPORTER_TOTAL_TONNES", "UNTRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CORRECTED_CI_TRACED", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CORRECTED_CI_UNTRACED", "UNTRACED", TRADE_TYPE)) %>%
+  spread(CI, VOLUME) %>%
+  rename(VOLUME = MEAN,
+         CORRECTED_VOLUME_CI = CORRECTED) %>%
+  mutate(
+    TRADE_TYPE = factor(TRADE_TYPE, levels = c("UNTRACED","TRACED"))
+    )  
+```
+
+```{r VIS 2024 vol and perc traded vs untraded, echo = FALSE}
+ggarrange(
+  #volume traders
+  ggplot(plot_volume_traced %>%
+           filter(!EXPORTER_GROUP_CLEAN %in% expcooplist,
+                  YEAR == 2024),
+         aes(x = reorder(EXPORTER_GROUP_CLEAN, VOLUME), y = VOLUME, fill = TRADE_TYPE)) +
+    geom_bar(stat = "identity", position = position_stack()) +
+    theme_minimal() + 
+    scale_fill_viridis_d() + # REMOVED guide argument
+    geom_errorbar(aes(x = EXPORTER_GROUP_CLEAN, ymin = CORRECTED_VOLUME_CI-CI, 
+                      ymax = CORRECTED_VOLUME_CI+CI), width = .2,
+                  position = "identity") +
+    guides(fill = guide_legend(title="Trade type", reverse = TRUE)) + # MOVED title here
+    labs(x = "Exporter", y = "Traded volume (tonnes)") +
+    theme(panel.border = element_blank(),
+          panel.background=element_rect(fill="transparent", colour=NA),
+          axis.title.x = element_blank(), axis.title.y = element_text(angle = 90)) +
+    coord_flip(),
+    
+  #percentage traders
+  ggplot(plot_percentage_traced %>%
+           filter(!EXPORTER_GROUP_CLEAN %in% expcooplist,
+                  YEAR == 2024) %>%
+           left_join(plot_volume_traced, by = c("EXPORTER_GROUP_CLEAN", "TRADE_TYPE", "YEAR")),
+         aes(x = reorder(EXPORTER_GROUP_CLEAN, VOLUME), y = PERCENTAGE, fill = TRADE_TYPE)) +
+    geom_bar(stat = "identity", position = position_stack()) +
+    theme_minimal() + 
+    scale_fill_viridis_d() + # REMOVED guide argument
+    geom_errorbar(aes(x = EXPORTER_GROUP_CLEAN, ymin = PERCENTAGE-CI_PERCENTAGE_TRACED_EXPORTER_TOTAL, 
+                      ymax = PERCENTAGE+CI_PERCENTAGE_TRACED_EXPORTER_TOTAL), width = .2,
+                  position = "identity") +
+    guides(fill = guide_legend(title="Trade type", reverse = TRUE)) + # MOVED title here
+    labs(x = "Exporter", y = "Proportions of trade (%)") +
+    theme(panel.border = element_blank(),
+          panel.background=element_rect(fill="transparent", colour=NA),
+          axis.text.y = element_blank(), axis.title.y = element_blank(),
+          axis.ticks.y = element_blank(), axis.title.x = element_blank()) +
+    coord_flip(),
+    
+  #volume expcoop
+  ggplot(plot_volume_traced %>%
+           filter(EXPORTER_GROUP_CLEAN %in% expcooplist,
+                  YEAR == 2024),
+         aes(x = reorder(EXPORTER_GROUP_CLEAN, VOLUME), y = VOLUME, fill = TRADE_TYPE)) +
+    geom_bar(stat = "identity", position = position_stack()) +
+    theme_minimal() + 
+    scale_fill_viridis_d() + # REMOVED guide argument
+    geom_errorbar(aes(x = EXPORTER_GROUP_CLEAN, ymin = CORRECTED_VOLUME_CI-CI, 
+                      ymax = CORRECTED_VOLUME_CI+CI), width = .2,
+                  position = "identity") +
+    guides(fill = guide_legend(title="Trade type", reverse = TRUE)) + # MOVED title here
+    labs(x = "Exporting cooperative", y = "Traded volume (tonnes)") +
+    theme(panel.border = element_blank(), axis.text.y = element_text(size = rel(0.75)),
+          panel.background=element_rect(fill="transparent", colour=NA),
+          axis.title.y = element_text(angle = 90)) +
+    coord_flip(),
+    
+  #percentage expcoop
+  ggplot(plot_percentage_traced %>%
+           filter(EXPORTER_GROUP_CLEAN %in% expcooplist,
+                  YEAR == 2024) %>%
+           left_join(plot_volume_traced, by = c("EXPORTER_GROUP_CLEAN", "TRADE_TYPE", "YEAR")),
+         aes(x = reorder(EXPORTER_GROUP_CLEAN, VOLUME), y = PERCENTAGE, fill = TRADE_TYPE)) +
+    geom_bar(stat = "identity", position = position_stack()) +
+    theme_minimal() + 
+    scale_fill_viridis_d() + # REMOVED guide argument
+    geom_errorbar(aes(x = EXPORTER_GROUP_CLEAN, ymin = PERCENTAGE-CI_PERCENTAGE_TRACED_EXPORTER_TOTAL, 
+                      ymax = PERCENTAGE+CI_PERCENTAGE_TRACED_EXPORTER_TOTAL), width = .2,
+                  position = "identity") +
+    guides(fill = guide_legend(title="Trade type", reverse = TRUE)) + # MOVED title here
+    labs(x = "Exporting cooperative", y = "Proportions of trade (%)") +
+    theme(panel.border = element_blank(),
+          panel.background=element_rect(fill="transparent", colour=NA),
+          axis.text.y = element_blank(), axis.title.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    coord_flip(),
+  
+  ncol = 2, nrow = 2, common.legend = TRUE, legend = "top",
+  widths = c(3, 1)
+)
+```
+
+
+**How much of exporting cooperative volumes are attributed to disclosing/CFI signatory traders that import from them (as per customs data)?** 
+
+```{r}
+trader_bean_eq_vol_mod <- 
+  trader_bean_eq_vol %>% 
+  select(EXPORTER_GROUP_CLEAN, TRADER_BEQ_VOLUME_EXPORTED) %>% 
+  mutate(TRADER_BEQ_VOLUME_EXPORTED = TRADER_BEQ_VOLUME_EXPORTED/1000)
+
+in_coop <- 
+  plot_volume_traced %>% 
+  filter(EXPORTER_GROUP_CLEAN %in% expcooplist,
+         YEAR == 2024, 
+         TRADE_TYPE=="TRACED") %>%
+  left_join(trader_bean_eq_vol_mod, by = 'EXPORTER_GROUP_CLEAN') %>% 
+  mutate(PCT_COUNTED = 100 * VOLUME / TRADER_BEQ_VOLUME_EXPORTED, 
+         TRADE_TYPE = "Cooperative")
+  
+in_trader <-
+  plot_volume_traced %>% 
+  filter(EXPORTER_GROUP_CLEAN %in% expcooplist,
+         YEAR == 2024, 
+         TRADE_TYPE=="TRACED") %>%
+  left_join(trader_bean_eq_vol_mod, by = 'EXPORTER_GROUP_CLEAN') %>% 
+  mutate(PCT_COUNTED = 100 * (TRADER_BEQ_VOLUME_EXPORTED - VOLUME) / TRADER_BEQ_VOLUME_EXPORTED, 
+         TRADE_TYPE = "Disclosing company")
+  
+plot_coops <- 
+  rbind(in_coop,
+        in_trader) %>% 
+  arrange(EXPORTER_GROUP_CLEAN)
+         
+ggplot(plot_coops,
+       aes(x = reorder(EXPORTER_GROUP_CLEAN, VOLUME), y = PCT_COUNTED, fill = TRADE_TYPE)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE)) +
+  theme_minimal() + 
+  labs(fill = "Exporter type") +
+  
+  labs(x = "", y = "Proportions of export (%)", 
+       title = "Shares of exporting cooperatives' volumes on the account of disclosing companies") +
+  theme(panel.border = element_blank(),
+        panel.background=element_rect(fill="transparent", colour=NA),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(), 
+        plot.title = element_text(size=10)) +
+  coord_flip()
+```
+
+
+The [Cocoa Barometer](https://www.voicenetwork.eu/cocoa-barometer/), published every 2 years, provides figures reported by companies for the year before. **Hence, figures from Barometer 2025 are valid for the year 2024.** 
+
+
+**How important are these companies; what is the proportion of the total export they handle?**
+
+```{r echo = FALSE, message = FALSE}
+kable(output_summarised %>%
+        filter(EXPORTER_GROUP_CLEAN %in% unique(volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN)) %>%
+        left_join(total_volume_val_traded, by = "YEAR") %>%
+        mutate(PERCENTAGE_TOTAL_TRACED = 100 * (VOLUME_BEAN_EQUIVALENT/1000) / TOTAL_VOLUME_TRADED_TONNES) %>%
+        group_by(EXPORTER_GROUP_CLEAN) %>%
+        summarise(PERCENTAGE_TOTAL_TRACED = sum(PERCENTAGE_TOTAL_TRACED)) %>%
+        filter(PERCENTAGE_TOTAL_TRACED > 1) %>%
+        mutate(#EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = ordered_all),
+               PERCENTAGE_TOTAL_TRACED = format(PERCENTAGE_TOTAL_TRACED, digits = 3)
+               ) %>%
+        arrange(desc(PERCENTAGE_TOTAL_TRACED)),
+      col.names = c("Exporter", "Percentage of total exported volume"),
+      align = c("l", "r"),
+      caption = "Percentage of the total exported volume handled by individual exporters, showing only those that handle at least 1% of the total export"
+      ) %>%
+  kable_paper(full_width = F) #%>%
+  # row_spec(8, extra_css = "border-bottom: 1px solid")
+```
+
+
+
+
+## 2.2. How is the sourcing of these companies spread geographically?
+
+```{r include = FALSE}
+dataframe <- volume_val_exporteroriginal_country_producer %>%
+  filter(EXPORTER_GROUP_CLEAN %in% ordered_traders,
+         !is.na(GEOCODE)) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  #first need to sum over the different EXPORTER_ORIGINAL names (i.e. group by EXPORTER_GROUP_CLEAN), keeping the 1000 values
+  group_by(EXPORTER_GROUP_CLEAN, YEAR, GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  #then calculate means per EXPORTER_GROUP_CLEAN
+  group_by(EXPORTER_GROUP_CLEAN, YEAR, GEOCODE) %>%
+  summarise(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES = mean(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES)) %>%
+  ungroup()
+plot_traced_geocode <- data.frame()
+
+for (buyer in ordered_traders) {
+  for (year in 2024) {
+    plot_traced_geocode <- plot_traced_geocode %>%
+        rbind(dataframe %>%
+                     filter(EXPORTER_GROUP_CLEAN == buyer, YEAR == year) %>%
+                     full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+                     mutate(EXPORTER_GROUP_CLEAN = buyer,
+                            YEAR = year)) %>%
+      distinct()
+  }
+}
+rm(dataframe)
+plot_traced_geocode <- plot_traced_geocode %>%
+  mutate(EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = ordered_traders)
+  )
+```
+
+```{r echo = FALSE}
+# ggplot(plot_traced_geocode) +
+#   geom_sf(show.legend=TRUE, data = plot_traced_geocode$geometry, 
+#           aes(fill = plot_traced_geocode$MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000)) +
+#   facet_wrap(~plot_traced_geocode$EXPORTER_GROUP_CLEAN) +
+#   theme_minimal() +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank()) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('COCOA TONNES'),
+#                      direction = -1,
+#                      label = unit_format(unit = "K"))
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000), 
+          col = NA) +
+  facet_wrap(~EXPORTER_GROUP_CLEAN) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 6)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('COCOA TONNES'),
+                     direction = -1,
+                     label = unit_format(unit = "K")) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+```{r echo = FALSE, message = FALSE}
+# st_as_sf(plot_traced_geocode %>%
+#   left_join(plot_traced_geocode %>%
+#               group_by(EXPORTER_GROUP_CLEAN) %>%
+#               summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+#             by = "EXPORTER_GROUP_CLEAN") %>%
+#   mutate(
+#     PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)) %>%
+#   ggplot() +
+#   geom_sf(show.legend=TRUE, 
+#           aes(fill = PROPORTION_DIRECT_SOURCING)) +
+#   facet_wrap(~EXPORTER_GROUP_CLEAN) +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank()) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('Contribution to \ndirect sourcing (%)'),
+#                      direction = -1)
+plot_traced_geocode <- plot_traced_geocode %>%
+  left_join(plot_traced_geocode %>%
+              group_by(EXPORTER_GROUP_CLEAN) %>%
+              summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+            by = "EXPORTER_GROUP_CLEAN") %>%
+  mutate(
+    PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = PROPORTION_DIRECT_SOURCING), 
+          col = NA) +
+  facet_wrap(~EXPORTER_GROUP_CLEAN) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 6)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('Contribution to \ndirect sourcing (%)'),
+                     direction = -1) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+The spatial distribution of direct sourcing is quite heterogeneous across traders. 
+Only the 3 big ones source from virtually all the country. The others have more scattered supply bases. 
+
+(there is a map of the departments and their names at the bottom of this document)
+and [this one](https://upload.wikimedia.org/wikipedia/commons/8/83/Map_of_C%C3%B4te_d%27Ivoire_Regions_and_Departments_with_Names_%28FR%29.svg) online is more readable. 
+
+```{r include = FALSE}
+dataframe <- volume_val_exporteroriginal_country_producer %>%
+  filter(EXPORTER_GROUP_CLEAN %in% ordered_expcoop,
+         !is.na(GEOCODE)) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  #first need to sum over the different EXPORTER_ORIGINAL names, keeping the 1000 values
+  group_by(EXPORTER_GROUP_CLEAN, YEAR, GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  #then calculate means per EXPORTER_GROUP_CLEAN
+  group_by(EXPORTER_GROUP_CLEAN, YEAR, GEOCODE) %>%
+  summarise(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES = mean(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES)) %>%
+  ungroup()
+plot_traced_geocode <- data.frame()
+
+for (buyer in ordered_expcoop) {
+  for (year in 2024) {
+    plot_traced_geocode <- plot_traced_geocode %>%
+        rbind(dataframe %>%
+                     filter(EXPORTER_GROUP_CLEAN == buyer, YEAR == year) %>%
+                     full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+                     mutate(EXPORTER_GROUP_CLEAN = buyer,
+                            YEAR = year)) %>%
+      distinct()
+  }
+}
+rm(dataframe)
+plot_traced_geocode <- plot_traced_geocode %>%
+  mutate(
+    EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, 
+                            levels = ordered_expcoop)
+  )
+```
+
+```{r echo = FALSE}
+# ggplot(plot_traced_geocode) +
+#   geom_sf(show.legend=TRUE, data = plot_traced_geocode$geometry, 
+#           aes(fill = plot_traced_geocode$MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000)) +
+#   facet_wrap(~plot_traced_geocode$EXPORTER_GROUP_CLEAN) +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),
+#         strip.text = element_text(size = 6)) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('COCOA TONNES'),
+#                      direction = -1,
+#                      label = unit_format(unit = "K"))
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000), 
+          col = NA) +
+  facet_wrap(~EXPORTER_GROUP_CLEAN) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 6)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('COCOA TONNES'),
+                     direction = -1,
+                     label = unit_format(unit = "K")) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+```{r echo = FALSE, message = FALSE}
+# st_as_sf(plot_traced_geocode %>%
+#   left_join(plot_traced_geocode %>%
+#               group_by(EXPORTER_GROUP_CLEAN) %>%
+#               summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+#             by = "EXPORTER_GROUP_CLEAN") %>%
+#   mutate(
+#     PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)) %>%
+#   ggplot() +
+#   geom_sf(show.legend=TRUE, 
+#           aes(fill = PROPORTION_DIRECT_SOURCING)) +
+#   facet_wrap(~EXPORTER_GROUP_CLEAN) +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),
+#         strip.text = element_text(size = 6)) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('Contribution to \ndirect sourcing (%)'),
+#                      direction = -1)
+plot_traced_geocode <- plot_traced_geocode %>%
+  left_join(plot_traced_geocode %>%
+              group_by(EXPORTER_GROUP_CLEAN) %>%
+              summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+            by = "EXPORTER_GROUP_CLEAN") %>%
+  mutate(
+    PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)
+
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = PROPORTION_DIRECT_SOURCING), 
+          col = NA) +
+  facet_wrap(~EXPORTER_GROUP_CLEAN) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"), strip.text = element_text(size = 6)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('Contribution to \ndirect sourcing (%)'),
+                     direction = -1) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+```{r include = FALSE}
+# Run this here, though it's used in end of script
+#what are the production volumes in surplus of what's directly traded, per geocode?
+
+production_surplus_pg <-
+  #calculate volumes sourced per geocode?
+  volume_val_exporteroriginal_country_producer %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  group_by(GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  #join production per geocode: geocodes from which sourced:
+  left_join(cocoa_production_pg %>%
+              mutate(COCOA_PRODUCTION_TONNES = COCOA_PRODUCTION_KG / 1000) %>%
+              select(LVL_4_CODE, COCOA_PRODUCTION_TONNES),
+            by = c("GEOCODE" = "LVL_4_CODE")) %>%
+  #add geocodes from which not sourced -> need 1000 repeats
+  bind_rows(cocoa_production_pg %>%
+              mutate(COCOA_PRODUCTION_TONNES = COCOA_PRODUCTION_KG / 1000) %>%
+              select(GEOCODE = LVL_4_CODE, COCOA_PRODUCTION_TONNES) %>%
+              filter(!GEOCODE %in% unique(volume_val_exporteroriginal_country_producer$GEOCODE)) %>%
+              rowwise() %>%
+              mutate(COCOA_PRODUCTION_TONNES = list(rep(COCOA_PRODUCTION_TONNES, N_DRAWS))) %>%
+              unnest(COCOA_PRODUCTION_TONNES) %>%
+              group_by() %>%
+              nest(COCOA_PRODUCTION_TONNES) %>%
+              ungroup() %>%
+              mutate(COCOA_PRODUCTION_TONNES_distribution =
+                       map(data, ~.x %>% mutate(NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ = row.names(.)))) %>%
+              select(-data) %>%
+              unnest(COCOA_PRODUCTION_TONNES_distribution)
+            ) %>%
+  #set NAs in traced volume as zeros, calculate production surplus, set zero where negative
+  mutate(
+    GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = 
+      if_else(is.na(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES), 0, GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES),
+    PRODUCTION_SURPLUS_TONNES = COCOA_PRODUCTION_TONNES - GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES,
+    PRODUCTION_SURPLUS_TONNES = case_when(
+      PRODUCTION_SURPLUS_TONNES > 0 ~ PRODUCTION_SURPLUS_TONNES,
+      TRUE ~ 0)) %>%
+  arrange(as.numeric(NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ))
+```
+
+
+-------------------------------------------------------------------------------------------------
+
+# 3. Importing countries
+
+## 3.1. Overall proportions and volumes of import that have been traced per importing country in the customs data
+
+```{r include = FALSE}
+total_volume_importing_country <-
+  output_summarised %>%
+  group_by(YEAR, COUNTRY_OF_DESTINATION) %>%
+  summarise(BEQ_VOLUME_IMPORTED = sum(VOLUME_BEAN_EQUIVALENT),
+            VAL_IMPORTED = sum(CIF_USD)) 
+
+volume_traced_importing_country <-
+  volume_val_exporteroriginal_country_producer %>%
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  #get the 1000 values per importing country, convert to tonnes
+  group_by(COUNTRY_OF_DESTINATION, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  full_join(total_volume_importing_country, by = c("COUNTRY_OF_DESTINATION")) %>%
+  mutate(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES = case_when(
+    is.na(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES) ~ 0,
+    TRUE ~ VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES)
+  ) %>%
+  mutate(VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES = 
+           (BEQ_VOLUME_IMPORTED / 1000) - VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES) %>%
+  #get means per importing country
+  group_by(COUNTRY_OF_DESTINATION) %>%
+  summarise(
+         MEAN_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES = mean(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES),
+         CI_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES = qt(0.95/2+0.5,
+                                                      length(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES)-1) *
+              (sd(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES) /
+                 sqrt(length(VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES))),
+         
+         MEAN_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES = mean(VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES),
+         CI_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES = qt(0.95/2+0.5,
+                                                        length(VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES)-1) *
+              (sd(VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES) /
+                 sqrt(length(VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES))))
+
+plot_volume_traced_importing_country <-
+  volume_traced_importing_country %>%
+  select(COUNTRY_OF_DESTINATION, MEAN_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES,
+         MEAN_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES,
+         CI_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES, CI_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES) %>%
+  #adapt CI for plotting; 
+  mutate(
+    CORRECTED_CI_TRACED = MEAN_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES,
+    CORRECTED_CI_UNTRACED = MEAN_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES +
+      MEAN_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES
+      ) %>%
+  gather(TRADE_TYPE, VOLUME,
+         MEAN_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES:CORRECTED_CI_UNTRACED,
+         factor_key=TRUE) %>%
+  mutate(TRADE_TYPE_TWO = TRADE_TYPE) %>%
+  separate(TRADE_TYPE_TWO, c("CI")) %>%
+  mutate(TRADE_TYPE = gsub("MEAN_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("MEAN_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES", "UNTRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CI_VOLUME_TRACED_COUNTRY_OF_DESTINATION_TONNES", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CI_VOLUME_UNTRACED_COUNTRY_OF_DESTINATION_TONNES", "UNTRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CORRECTED_CI_TRACED", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("CORRECTED_CI_UNTRACED", "UNTRACED", TRADE_TYPE)) %>%
+  spread(CI, VOLUME) %>%
+  rename(VOLUME = MEAN,
+         CORRECTED_VOLUME_CI = CORRECTED) %>%
+  mutate(
+    TRADE_TYPE = factor(TRADE_TYPE, levels = c("UNTRACED","TRACED"))
+    ) 
+
+percentage_traced_importing_country <-
+  volume_val_exporteroriginal_country_producer %>%
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  group_by(COUNTRY_OF_DESTINATION, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(VOLUME_TRACED_COUNTRY_OF_DESTINATION = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ)) %>%
+  full_join(total_volume_importing_country,
+            by = c("COUNTRY_OF_DESTINATION")) %>%
+  mutate(VOLUME_TRACED_COUNTRY_OF_DESTINATION = case_when(
+    is.na(VOLUME_TRACED_COUNTRY_OF_DESTINATION) ~ 0,
+    TRUE ~ VOLUME_TRACED_COUNTRY_OF_DESTINATION)
+  )  %>%
+  mutate(PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION = 100 * 
+           VOLUME_TRACED_COUNTRY_OF_DESTINATION / BEQ_VOLUME_IMPORTED) %>%
+  group_by(COUNTRY_OF_DESTINATION) %>%
+  summarise(MEAN_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION =
+              mean(PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION),
+         CI_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION = 
+           qt(0.95/2+0.5, length(PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION)-1) *
+              (sd(PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION)/
+                 sqrt(length(PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION))))
+
+plot_percentage_traced_importing_country <-
+  percentage_traced_importing_country %>%
+  mutate(
+    MEAN_PERCENTAGE_UNTRACED_COUNTRY_OF_DESTINATION = 100 - MEAN_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION
+    ) %>%
+  select(COUNTRY_OF_DESTINATION, MEAN_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION,
+         MEAN_PERCENTAGE_UNTRACED_COUNTRY_OF_DESTINATION,
+         CI_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION) %>%
+  gather(TRADE_TYPE, PERCENTAGE,
+         MEAN_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION:MEAN_PERCENTAGE_UNTRACED_COUNTRY_OF_DESTINATION,
+         factor_key=TRUE) %>%
+  mutate(TRADE_TYPE = gsub("MEAN_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION", "TRACED", TRADE_TYPE),
+         TRADE_TYPE = gsub("MEAN_PERCENTAGE_UNTRACED_COUNTRY_OF_DESTINATION", "UNTRACED", TRADE_TYPE)) %>%
+  mutate(
+    CI_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION = 
+      ifelse(TRADE_TYPE == "TRACED", CI_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION, NA),
+    TRADE_TYPE = factor(TRADE_TYPE, levels = c("UNTRACED","TRACED"))
+    )
+```
+
+```{r VIS IMPORTING COUNTRIES vol and perc traded vs untraded, echo = FALSE}
+ggarrange(
+  #volume
+  ggplot(plot_volume_traced_importing_country,
+         aes(x = reorder(COUNTRY_OF_DESTINATION, VOLUME), y = VOLUME, fill = TRADE_TYPE)) +
+    geom_bar(stat = "identity", position = position_stack()) +
+    theme_minimal() + 
+    scale_fill_viridis_d() + # REMOVED guide argument
+    geom_errorbar(aes(x = COUNTRY_OF_DESTINATION, ymin = CORRECTED_VOLUME_CI-CI, 
+                      ymax = CORRECTED_VOLUME_CI+CI), width = .2,
+                  position = "identity") +
+    labs(x = "Importing country", y = "Imported volume (tonnes)") +
+    theme(panel.border = element_blank(),
+          panel.background=element_rect(fill="transparent", colour=NA),
+          axis.title.y = element_text(angle = 90)) +
+    guides(fill = guide_legend(title="Trade type", reverse = TRUE)) + # MOVED title here
+    coord_flip(),
+    
+  #percentage
+  ggplot(plot_percentage_traced_importing_country %>%
+           left_join(plot_volume_traced_importing_country, by = c("COUNTRY_OF_DESTINATION", "TRADE_TYPE")),
+         aes(x = reorder(COUNTRY_OF_DESTINATION, VOLUME), y = PERCENTAGE, fill = TRADE_TYPE)) +
+    geom_bar(stat = "identity", position = position_stack()) +
+    theme_minimal() + 
+    scale_fill_viridis_d() + # REMOVED guide argument
+    geom_errorbar(aes(x = COUNTRY_OF_DESTINATION, 
+                      ymin = PERCENTAGE-CI_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION, 
+                      ymax = PERCENTAGE+CI_PERCENTAGE_TRACED_COUNTRY_OF_DESTINATION), width = .2,
+                  position = "identity") +
+    labs(x = "Importing country", y = "Proportions of import (%)") +
+    theme(panel.border = element_blank(),
+          panel.background=element_rect(fill="transparent", colour=NA),
+          axis.text.y = element_blank(), axis.title.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    guides(fill = guide_legend(title="Trade type", reverse = TRUE)) + # MOVED title here
+    coord_flip(),
+    
+  ncol = 2, nrow = 1, common.legend = TRUE, legend = "top",
+  widths = c(3, 1)
+)
+```
+
+
+*proportion of their trade coming from exporting cooperatives:*
+
+```{r echo = FALSE, message = FALSE}
+# These are exporting coops we have been able to match to the CAM (expcooplist) PLUS names in customs data that look like a cooperative name, but couldn't be linked to a CAM coop (see exporting coop section in model script)
+allexpcoops <- c(expcooplist, "STE COOP AGR ENTENTE DE GUIGLO", "STE COOP MENIANSOU SAN P", "SOCIETE COOPERATIVE AVEC CONSEIL D'ADMINISTRATION", "SOCIETE COOPERATIVE AGRICOLE D", "SOCIETE COOPERATIVE AVEC CONSEIL D'", "ENTREP COOPERA DES PROD AGRIC")
+
+
+kable(
+  output_summarised %>%
+  filter(EXPORTER_GROUP_CLEAN %in% allexpcoops) %>%
+  group_by(COUNTRY_OF_DESTINATION) %>%
+  summarise(EXPCOOP_COUNTRY_BEQ = sum(VOLUME_BEAN_EQUIVALENT)) %>%
+  left_join(output_summarised %>%
+              group_by(COUNTRY_OF_DESTINATION) %>%
+              summarise(COUNTRY_BEQ = sum(VOLUME_BEAN_EQUIVALENT)),
+            by = "COUNTRY_OF_DESTINATION") %>%
+  mutate(PCT_EXPCOOP = EXPCOOP_COUNTRY_BEQ / COUNTRY_BEQ * 100) %>%
+  select(COUNTRY_OF_DESTINATION, PCT_EXPCOOP) %>%
+  left_join(output_summarised %>%
+              filter(EXPORTER_GROUP_CLEAN %in% expcooplist) %>%
+              group_by(COUNTRY_OF_DESTINATION) %>%
+              summarise(EXPCOOP_COUNTRY_BEQ = sum(VOLUME_BEAN_EQUIVALENT)) %>%
+              left_join(output_summarised %>%
+                          group_by(COUNTRY_OF_DESTINATION) %>%
+                          summarise(COUNTRY_BEQ = sum(VOLUME_BEAN_EQUIVALENT)),
+                        by = "COUNTRY_OF_DESTINATION") %>%
+              mutate(PCT_EXPCOOPLIST = EXPCOOP_COUNTRY_BEQ / COUNTRY_BEQ * 100) %>%
+              select(COUNTRY_OF_DESTINATION, PCT_EXPCOOPLIST),
+            by = "COUNTRY_OF_DESTINATION") %>%
+  mutate(PCT_EXPCOOPLIST = if_else(is.na(PCT_EXPCOOPLIST), 0, PCT_EXPCOOPLIST)) %>%
+  arrange(-PCT_EXPCOOP) %>%
+  mutate(PCT_EXPCOOP = format(PCT_EXPCOOP, digits = 2, nsmall = 2),
+         PCT_EXPCOOPLIST = format(PCT_EXPCOOPLIST, digits = 2, nsmall = 2)),
+  col.names = c("Importing country", "Proportion from cooperatives", "Proportion traced from cooperatives"),
+  align = c("l", "r", "r"),
+  caption = "Proportions of the total sourcing of importing countries coming from all exporting cooperatives and from those exporting cooperatives for which we can trace production, respectively."
+  ) %>%
+  kable_paper(full_width = F)
+```
+
+These shipments in customs data which exporter names look like a cooperative name, but that we could not match to a known coop in the Cocoa Accountability Map, account together for `r format(output_summarised %>% filter(EXPORTER_GROUP_CLEAN %in% allexpcoops & !(EXPORTER_GROUP_CLEAN %in% expcooplist)) %>% pull(VOLUME_BEAN_EQUIVALENT) %>% sum() / 1000, digits=2)` tonnes. 
+
+
+```{r echo = FALSE, message = FALSE}
+kable(
+  output_summarised %>%
+        left_join(total_volume_val_traded, by = "YEAR") %>%
+        mutate(PERCENTAGE_TOTAL_TRACED = 100 * (VOLUME_BEAN_EQUIVALENT/1000) / TOTAL_VOLUME_TRADED_TONNES) %>%
+        group_by(COUNTRY_OF_DESTINATION) %>%
+        summarise(PERCENTAGE_TOTAL_TRACED = sum(PERCENTAGE_TOTAL_TRACED))%>%
+        filter(PERCENTAGE_TOTAL_TRACED > 1) %>%
+        arrange(-PERCENTAGE_TOTAL_TRACED) %>%
+        mutate(PERCENTAGE_TOTAL_TRACED = format(PERCENTAGE_TOTAL_TRACED, digits = 2, nsmall = 2, 
+                                                scientific = FALSE)),
+      col.names = c("Importing country", "Percentage of total exported volume"),
+      caption = "Percentage of the total exported volume imported by individual countries, showing only those that imported at least 1% of the total export",
+      align = c("l","r")
+      ) %>%
+  kable_paper(full_width = F)
+```
+
+## 3.2. How is the sourcing of these importing countries spread geographically?
+
+### 3.2.1 Nine largest importing countries
+
+```{r include = FALSE}
+dataframe <- volume_val_exporteroriginal_country_producer %>%
+  filter(COUNTRY_OF_DESTINATION %in% ordered_countries[1:9],
+         !is.na(GEOCODE)) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  #first need to sum over the different COUNTRY_OF_DESTINATION names, keeping the 1000 values
+  group_by(COUNTRY_OF_DESTINATION, YEAR, GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  #then calculate means per COUNTRY_OF_DESTINATION
+  group_by(COUNTRY_OF_DESTINATION, YEAR, GEOCODE) %>%
+  summarise(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES = mean(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES)) %>%
+  ungroup()
+plot_traced_geocode <- data.frame()
+
+for (importer in ordered_countries[1:9]) {
+  for (year in 2024) {
+    plot_traced_geocode <- plot_traced_geocode %>%
+        rbind(dataframe %>%
+                     filter(COUNTRY_OF_DESTINATION == importer, YEAR == year) %>%
+                     full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+                     mutate(COUNTRY_OF_DESTINATION = importer,
+                            YEAR = year)) %>%
+      distinct()
+  }
+}
+rm(dataframe)
+plot_traced_geocode <- plot_traced_geocode %>%
+  mutate(
+    COUNTRY_OF_DESTINATION = factor(COUNTRY_OF_DESTINATION, 
+                                    levels = ordered_countries[1:9])
+  )
+```
+
+```{r echo = FALSE}
+# ggplot(plot_traced_geocode) +
+#   geom_sf(show.legend=TRUE, data = plot_traced_geocode$geometry, 
+#           aes(fill = plot_traced_geocode$MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000)) +
+#   facet_wrap(~plot_traced_geocode$COUNTRY_OF_DESTINATION) +
+#   theme_minimal() +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank()) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option="magma",
+#                      name = bquote('COCOA TONNES'),
+#                      direction = -1,
+#                      label = unit_format(unit = "K"))
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000), 
+          col = NA) +
+  facet_wrap(~COUNTRY_OF_DESTINATION) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm")) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('COCOA TONNES'),
+                     direction = -1,
+                     label = unit_format(unit = "K")) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+```{r echo = FALSE, message = FALSE}
+# st_as_sf(plot_traced_geocode %>%
+#   left_join(plot_traced_geocode %>%
+#               group_by(COUNTRY_OF_DESTINATION) %>%
+#               summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+#             by = "COUNTRY_OF_DESTINATION") %>%
+#   mutate(
+#     PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)) %>%
+#   ggplot() +
+#   geom_sf(show.legend=TRUE, 
+#           aes(fill = PROPORTION_DIRECT_SOURCING)) +
+#   facet_wrap(~COUNTRY_OF_DESTINATION) +
+#   theme_minimal() +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank()) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('Contribution to \ndirect sourcing (%)'),
+#                      direction = -1)
+plot_traced_geocode <- plot_traced_geocode %>%
+  left_join(plot_traced_geocode %>%
+              group_by(COUNTRY_OF_DESTINATION) %>%
+              summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+            by = "COUNTRY_OF_DESTINATION") %>%
+  mutate(
+    PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = PROPORTION_DIRECT_SOURCING), 
+          col = NA) +
+  facet_wrap(~COUNTRY_OF_DESTINATION) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm")) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('Contribution to \ndirect sourcing (%)'),
+                     direction = -1) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+ 
+```{r include = FALSE}
+### 3.2.2 Nine smallest importers
+
+dataframe <- volume_val_exporteroriginal_country_producer %>%
+  filter(COUNTRY_OF_DESTINATION %in% c("SENEGAL", "CHILE", "RUSSIAN FEDERATION", "SYRIAN ARAB REPUBLIC", "ALGERIA",
+                                       "TAIWAN, PROVINCE OF CHINA", "GREECE", "SAUDI ARABIA", "EGYPT"),
+         !is.na(GEOCODE)) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  #first need to sum over the different COUNTRY_OF_DESTINATION names, keeping the 1000 values
+  group_by(COUNTRY_OF_DESTINATION, YEAR, GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  #then calculate means per COUNTRY_OF_DESTINATION
+  group_by(COUNTRY_OF_DESTINATION, YEAR, GEOCODE) %>%
+  summarise(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES = mean(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES)) %>%
+  ungroup()
+plot_traced_geocode <- data.frame()
+
+for (importer in c("SENEGAL", "CHILE", "RUSSIAN FEDERATION", "SYRIAN ARAB REPUBLIC", "ALGERIA", "TAIWAN, PROVINCE OF CHINA", "GREECE", "SAUDI ARABIA", "EGYPT")) {
+  for (year in 2024) {
+    plot_traced_geocode <- plot_traced_geocode %>%
+        rbind(dataframe %>%
+                     filter(COUNTRY_OF_DESTINATION == importer, YEAR == year) %>%
+                     full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+                     mutate(COUNTRY_OF_DESTINATION = importer,
+                            YEAR = year)) %>%
+      distinct()
+  }
+}
+rm(dataframe)
+plot_traced_geocode <- plot_traced_geocode %>%
+  mutate(SOURCE = case_when(
+    is.na(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES) ~ "No",
+    TRUE ~ "Yes"
+    ),
+    COUNTRY_OF_DESTINATION = factor(COUNTRY_OF_DESTINATION, levels = 
+                                      c("SENEGAL", "CHILE", "RUSSIAN FEDERATION", "SYRIAN ARAB REPUBLIC", "ALGERIA", "TAIWAN, PROVINCE OF CHINA", "GREECE", "SAUDI ARABIA", "EGYPT"))
+  )
+```
+
+```{r include = FALSE}
+# Move the main data to the top level ggplot call
+ggplot(st_as_sf(plot_traced_geocode)) +
+  
+  # Background layer (Department boundaries)
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  
+  # Main Data Layer (Inherits data from ggplot call)
+  geom_sf(aes(fill = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000), 
+          col = NA) +
+  
+  # Facet works now because data is global
+  facet_wrap(~COUNTRY_OF_DESTINATION) +
+  
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 5)) +
+  
+  coord_sf(datum = NA) +
+  
+  scale_fill_viridis_c(option="magma", # Use _c for continuous
+                       name = bquote('COCOA TONNES'), 
+                       direction = -1,
+                       labels = scales::unit_format(unit = "K")) +
+  
+  guides(col = guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+### 3.2.2 All importing countries with traced trade
+
+
+```{r map of all importing countries, include = FALSE}
+dataframe <- volume_val_exporteroriginal_country_producer %>%
+  filter(!is.na(GEOCODE)) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  #first need to sum over the different COUNTRY_OF_DESTINATION names, keeping the 1000 values
+  group_by(COUNTRY_OF_DESTINATION, YEAR, GEOCODE, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  #then calculate means per COUNTRY_OF_DESTINATION
+  group_by(COUNTRY_OF_DESTINATION, YEAR, GEOCODE) %>%
+  summarise(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES = mean(GEOCODE_SOURCED_DIRECT_VOLUME_BEQ_TONNES)) %>%
+  ungroup()
+plot_traced_geocode <- data.frame()
+
+for (importer in unique(dataframe$COUNTRY_OF_DESTINATION)) {
+  for (year in 2024) {
+    plot_traced_geocode <- plot_traced_geocode %>%
+        rbind(dataframe %>%
+                     filter(COUNTRY_OF_DESTINATION == importer, YEAR == year) %>%
+                     full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+                     mutate(COUNTRY_OF_DESTINATION = importer,
+                            YEAR = year)) %>%
+      distinct()
+  }
+}
+rm(dataframe)
+plot_traced_geocode <- plot_traced_geocode %>%
+  mutate(
+    COUNTRY_OF_DESTINATION = factor(COUNTRY_OF_DESTINATION, 
+                                    levels = ordered_countries)
+  )
+```
+
+```{r echo = FALSE}
+# ggplot(plot_traced_geocode) +
+#   geom_sf(show.legend=TRUE, data = plot_traced_geocode$geometry, 
+#           aes(fill = plot_traced_geocode$MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000)) +
+#   facet_wrap(~plot_traced_geocode$COUNTRY_OF_DESTINATION) +
+#   theme_minimal() +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),
+#         strip.text = element_text(size = 5)) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option="magma",
+#                      name = bquote('COCOA TONNES'),
+#                      direction = -1,
+#                      label = unit_format(unit = "K"))
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES/1000), 
+          col = NA) +
+  facet_wrap(~COUNTRY_OF_DESTINATION) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 5)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('COCOA TONNES'),
+                     direction = -1,
+                     label = unit_format(unit = "K")) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+```{r echo = FALSE, message = FALSE}
+# st_as_sf(plot_traced_geocode %>%
+#   left_join(plot_traced_geocode %>%
+#               group_by(COUNTRY_OF_DESTINATION) %>%
+#               summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+#             by = "COUNTRY_OF_DESTINATION") %>%
+#   mutate(
+#     PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)) %>%
+#   ggplot() +
+#   geom_sf(show.legend=TRUE, 
+#           aes(fill = PROPORTION_DIRECT_SOURCING)) +
+#   facet_wrap(~COUNTRY_OF_DESTINATION) +
+#   theme_minimal() + 
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),
+#         strip.text = element_text(size = 5)) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option = "magma",
+#                      name = bquote('Contribution to \ndirect sourcing (%)'),
+#                      direction = -1)
+plot_traced_geocode <- plot_traced_geocode %>%
+  left_join(plot_traced_geocode %>%
+              group_by(COUNTRY_OF_DESTINATION) %>%
+              summarise(TOTAL_DIRECT_VOLUME_TONNES = sum(MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES, na.rm = TRUE)),
+            by = "COUNTRY_OF_DESTINATION") %>%
+  mutate(
+    PROPORTION_DIRECT_SOURCING = MEAN_GEOCODE_SOURCED_DIRECT_VOLUME_TONNES / TOTAL_DIRECT_VOLUME_TONNES * 100)
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_traced_geocode),
+          aes(fill = PROPORTION_DIRECT_SOURCING), 
+          col = NA) +
+  facet_wrap(~COUNTRY_OF_DESTINATION) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 5)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('Contribution to \ndirect sourcing (%)'),
+                     direction = -1) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+-------------------------------------------------------------------------------------------------
+
+# 4. Chocolate manufacturers / Non-exporting companies
+
+Apart from the companies appearing in the trade data as exporters, a number of non-exporting companies disclosed the cooperatives they directly source from. For these companies, we can also calculate impact on the ground.  
+The following graphics, calculations are based on proportions of the total farmer base these companies source from per department.
+
+
+## 4.1. Geographical spread of their sourcing
+
+```{r include = FALSE}
+dataframe <-
+  cocoa_providers %>%
+  select(GEOCODE, DISCLOSURE_SOURCE, COOP_FARMER_PROPORTION_distribution) %>%
+  filter(!DISCLOSURE_SOURCE %in% unique(total_volume_val_exporter$EXPORTER_GROUP_CLEAN)) %>%
+  filter(!is.na(GEOCODE)) %>%
+  unnest(COOP_FARMER_PROPORTION_distribution) %>%
+  group_by(DISCLOSURE_SOURCE, GEOCODE, NUM_COOP_FARMER_PROPORTION) %>%
+  summarise(GEOCODE_FARMER_PROPORTION = sum(COOP_FARMER_PROPORTION)) %>%
+  group_by(DISCLOSURE_SOURCE, GEOCODE) %>%
+  summarise(MEAN_GEOCODE_FARMER_PROPORTION = mean(GEOCODE_FARMER_PROPORTION)*100) %>%
+  ungroup()
+plot_manufacturers <- data.frame()
+
+for (manufacturer in manufacturer_names) {
+    plot_manufacturers <- plot_manufacturers %>%
+        rbind(dataframe %>%
+                     filter(DISCLOSURE_SOURCE == manufacturer) %>%
+                     full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE")) %>%
+                     mutate(DISCLOSURE_SOURCE = manufacturer)) %>%
+      distinct()
+}
+
+rm(dataframe)
+plot_manufacturers <- plot_manufacturers %>%
+  mutate(
+    DISCLOSURE_SOURCE = factor(DISCLOSURE_SOURCE, levels = manufacturer_names)
+  )
+```
+```{r echo = FALSE, message = FALSE}
+# ggplot(plot_manufacturers) +
+#   geom_sf(show.legend=TRUE, data = plot_manufacturers$geometry, 
+#           aes(fill = plot_manufacturers$MEAN_GEOCODE_FARMER_PROPORTION)) +
+#   facet_wrap(~plot_manufacturers$DISCLOSURE_SOURCE) +
+#   theme_minimal() +
+#   theme(plot.title = element_text(hjust = 0.5), panel.background = element_blank(),
+#         strip.text = element_text(size = 6)) +
+#   coord_sf(datum = NA) +
+#   scale_fill_viridis(option="magma",
+#                      name = bquote('Contribution to \ndirect sourcing (%)'),
+#                      direction = -1)
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(plot_manufacturers),
+          aes(fill = MEAN_GEOCODE_FARMER_PROPORTION), 
+          col = NA) +
+  facet_wrap(~DISCLOSURE_SOURCE) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm"),
+        strip.text = element_text(size = 6)) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('Contribution to \ndirect sourcing (%)'),
+                     direction = -1) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+-------------------------------------------------------------------------------------------------
+
+# 5. Cocoa certification schemes
+
+## 5.1. Total exported volume of certified cocoa
+```{r}
+# Make certification dummies, that are not in model results as of 2k20
+volume_val_exporteroriginal_country_producer <- 
+  volume_val_exporteroriginal_country_producer %>% 
+  mutate(UTZ = grepl("UTZ", CERTIFICATIONS), 
+         FAIRTRADE = grepl("FAIRTRADE", CERTIFICATIONS),
+         RA = grepl("RAINFOREST ALLIANCE", CERTIFICATIONS))
+
+cocoa_providers <- 
+  cocoa_providers %>% 
+  mutate(UTZ = grepl("UTZ", CERTIFICATIONS), 
+         FAIRTRADE = grepl("FAIRTRADE", CERTIFICATIONS),
+         RA = grepl("RAINFOREST ALLIANCE", CERTIFICATIONS))
+
+
+```
+
+
+
+```{r include = FALSE}
+#convert to a long format; have rows that are utz-certified, rows for FT, rows for RA
+#in doing so, the volume of coops that are certified under multiple standards (utz, ra, ft) are duplicated
+certification_analyses <- bind_rows(
+  volume_val_exporteroriginal_country_producer %>%
+    filter(UTZ == TRUE) %>% 
+    mutate(CERTIFICATION = "UTZ"),
+  volume_val_exporteroriginal_country_producer %>%
+    filter(FAIRTRADE == TRUE) %>% 
+    mutate(CERTIFICATION = "FAIRTRADE"),
+  volume_val_exporteroriginal_country_producer %>%
+    filter(RA == TRUE) %>% 
+    mutate(CERTIFICATION = "RA")
+  ) %>%
+  select(YEAR, GEOCODE, COOPACRONYM_AANAME, COOPNAME_AADENOMINATION, 
+         EXPORTER_ORIGINAL, EXPORTER_GROUP_CLEAN, COUNTRY_OF_DESTINATION,
+         COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution, COOP_SOURCED_DIRECT_VAL_distribution,
+         CERTIFICATION)
+
+certified_volume_val_exported <-
+  certification_analyses %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution, COOP_SOURCED_DIRECT_VAL_distribution)) %>%
+  #first sum the 1000 values per NUM_, convert to tonnes
+  group_by(YEAR, CERTIFICATION, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ, NUM_COOP_SOURCED_DIRECT_VAL) %>%
+  summarise(TOTAL_SOURCED_DIRECT_VOLUME_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000,
+            TOTAL_SOURCED_DIRECT_VAL_TONNES = sum(COOP_SOURCED_DIRECT_VAL) / 1000) %>%
+  rename(
+    NUM_TOTAL_SOURCED_DIRECT_VOLUME_TONNES = NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ, 
+    NUM_TOTAL_SOURCED_DIRECT_VAL_TONNES = NUM_COOP_SOURCED_DIRECT_VAL
+  ) %>%
+  #then take a mean of these 1000 values
+  group_by(YEAR, CERTIFICATION) %>%
+  summarise(
+    MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES = mean(TOTAL_SOURCED_DIRECT_VOLUME_TONNES), 
+    CI_TOTAL_SOURCED_DIRECT_VOLUME_TONNES = 
+      qt(0.95/2+0.5, length(TOTAL_SOURCED_DIRECT_VOLUME_TONNES)-1) *
+      (sd(TOTAL_SOURCED_DIRECT_VOLUME_TONNES)/sqrt(length(TOTAL_SOURCED_DIRECT_VOLUME_TONNES))), 
+    MEAN_TOTAL_SOURCED_DIRECT_VAL_TONNES = mean(TOTAL_SOURCED_DIRECT_VAL_TONNES),
+    CI_TOTAL_SOURCED_DIRECT_VAL_TONNES = qt(0.95/2+0.5, length(TOTAL_SOURCED_DIRECT_VAL_TONNES)-1) *
+              (sd(TOTAL_SOURCED_DIRECT_VAL_TONNES)/sqrt(length(TOTAL_SOURCED_DIRECT_VAL_TONNES)))
+  ) 
+```
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+ggplot(certified_volume_val_exported, aes(YEAR, MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES)) +
+  geom_bar(stat = "identity", position = position_stack()) +
+  facet_wrap(~ CERTIFICATION) +
+  geom_errorbar(aes(x = YEAR,
+                    ymin = MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES-
+                      CI_TOTAL_SOURCED_DIRECT_VOLUME_TONNES,
+                    ymax = MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES+
+                      CI_TOTAL_SOURCED_DIRECT_VOLUME_TONNES),
+                width = .2, linetype = "solid") +
+  labs(x = "Trade years", y = "Traced certified volume (tonnes)") +
+  theme(panel.border = element_blank(), axis.title.x = element_blank(),
+        axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        #panel.background=element_rect(fill="transparent", colour=NA),
+        legend.position = "top")
+```  
+
+
+Sources for 2021 volumes of certified cocoa (2024 not available yet): 
+Fairtrade: https://www.fairtrade.net/impact/top-7-products-dashboard
+
+Rainforest Alliance & UTZ: not available in 2024 either, so leave 2021 info.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+certified_disclosures <-
+  tibble(
+    CERTIFICATION = c("UTZ", "RA", "FAIRTRADE"),
+    YEAR = c(2024, 2024, 2024), # necessary to specify 2024 for the join to work, but this actually refers to 2021. 
+    CERTIFIED_PRODUCTION_TONNES = c(485797, 162270, 512033),
+    SOLD_AS_CERTIFIED_TONNES = c(442515, 126279, NA),
+    NUMBER_OF_FARMERS = c(NA, NA, 271963),
+    PRODUCTION_AREA_HA = c(NA, NA, 1042056)
+  )
+
+
+left_join(certified_volume_val_exported, certified_disclosures, by = c("YEAR", "CERTIFICATION")) %>%
+  mutate(
+    PERC_SOURCED_PRODUCTION = 100 * MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES / CERTIFIED_PRODUCTION_TONNES,
+    PERC_SOURCED_SOLD = 100 * MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES / SOLD_AS_CERTIFIED_TONNES
+  ) %>%
+  select(YEAR, CERTIFICATION, SOLD = SOLD_AS_CERTIFIED_TONNES, 
+         TRACED = MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES, 
+         PRODUCED = CERTIFIED_PRODUCTION_TONNES,
+         PERC_SOURCED_PRODUCTION) %>%
+  gather(VARIABLE, VALUE, SOLD:PRODUCED) %>%
+  mutate(
+    FILL = case_when(
+      VARIABLE == "TRACED" ~ "Traced",
+      TRUE ~ "Other"
+    ),
+    FILL = factor(FILL, levels = c("Other", "Traced"))) %>%
+  ggplot(aes(VARIABLE, VALUE/1000, fill = FILL)) + # , label = LABEL
+  geom_bar(stat = "identity") +
+  # geom_text(y = 20) +
+  facet_wrap(~ CERTIFICATION) +
+  theme_minimal() + 
+  labs(fill = "Trade type") +
+  #scale_fill_manual(values = c("grey", "grey", "darkgreen")) +
+  labs(y = "Certified cocoa volume (1000 tonnes)") +
+  theme(axis.title.x = element_blank(), legend.position = "none",
+        axis.title.y = element_text(angle = 90)) 
+```
+
+Note that  `r cam_long %>% filter(grepl("UTZ", CERTIFICATIONS) & !is.na(TRADER_NAME)) %>% pull(SUPPLIER_ID) %>% unique() %>% length()` out of `r cam_long %>% filter(grepl("UTZ", CERTIFICATIONS)) %>% pull(SUPPLIER_ID) %>% unique() %>% length()` cooperatives cited as UTZ-certified were linked to specific buyers (exporters and processers). This represents `r format(100 * cam_long %>% filter(grepl("UTZ", CERTIFICATIONS) & !is.na(TRADER_NAME)) %>% pull(SUPPLIER_ID) %>% unique() %>% length() / cam_long %>% filter(grepl("UTZ", CERTIFICATIONS)) %>% pull(SUPPLIER_ID) %>% unique() %>% length(), digits = 2)`% of UTZ-certified cooperatives. Our traced volume accounted for `r format(100 *  certified_volume_val_exported[certified_volume_val_exported$CERTIFICATION == "UTZ",]$MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES / certified_disclosures[certified_disclosures$CERTIFICATION == "UTZ",]$CERTIFIED_PRODUCTION_TONNES, digits = 2)`% of UTZ's produced volumes.
+In the case of Fairtrade, `r cam_long %>% filter(grepl("FAIRTRADE", CERTIFICATIONS) & !is.na(TRADER_NAME)) %>% pull(SUPPLIER_ID) %>% unique() %>% length()` out of `r cam_long %>% filter(grepl("FAIRTRADE", CERTIFICATIONS)) %>% pull(SUPPLIER_ID) %>% unique() %>% length()` cooperatives cited as FAIRTRADE-certified were linked to specific buyers (exporters and processers). This represents `r format(100 * cam_long %>% filter(grepl("FAIRTRADE", CERTIFICATIONS) & !is.na(TRADER_NAME)) %>% pull(SUPPLIER_ID) %>% unique() %>% length() / cam_long %>% filter(grepl("FAIRTRADE", CERTIFICATIONS)) %>% pull(SUPPLIER_ID) %>% unique() %>% length(), digits = 2)`% of FAIRTRADE-certified cooperatives. Our traced volume accounted for `r format(100 *  certified_volume_val_exported[certified_volume_val_exported$CERTIFICATION == "FAIRTRADE",]$MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES / certified_disclosures[certified_disclosures$CERTIFICATION == "FAIRTRADE",]$SOLD_AS_CERTIFIED_TONNES, digits = 2)`% of FAIRTRADE's produced volumes.
+
+
+**Below, we also compare certified volumes disclosed by certification organisations with estimated certified volumes for all cooperatives, not only those mentioned in a trading company disclosure. This includes, in particular, volumes from coops disclosed only by certification programs (only RA so far) and/or manufacturing companies. This may double count flows disclosed once by a trader and once by a manufacturer that doesn't disclose the flow is provisioned by this trader. For these reasons, the estimate is larger for all three certification schemes.  **
+
+```{r}
+# this is the average yield in cocoa tonnes per year per farmer according to KIT study. 
+avg_yield <- mean(kit_farm_production$cocoa_prod_total_kgs) / 1000 # convert in tonnes 
+
+# cam_long is already filtered to 2024.
+
+# cam_long %>% pull(NUM_FARMERS) %>% sum( na.rm = TRUE )*avg_yield 
+
+ft_cam_vol <- cam_long %>% 
+  filter(grepl("FAIRTRADE", CERTIFICATIONS)) %>% 
+  pull(NUM_FARMERS) %>% 
+  sum( na.rm = TRUE )*avg_yield 
+
+ra_cam_vol <- cam_long %>% 
+  filter(grepl("RAINFOREST ALLIANCE", CERTIFICATIONS)) %>% 
+  pull(NUM_FARMERS) %>% 
+  sum( na.rm = TRUE )*avg_yield 
+
+utz_cam_vol <- cam_long %>% 
+  filter(grepl("UTZ", CERTIFICATIONS)) %>% 
+  pull(NUM_FARMERS) %>% 
+  sum( na.rm = TRUE )*avg_yield 
+
+certified_volume_CAM <- 
+  certified_volume_val_exported %>% 
+  mutate(MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES = case_when(
+    CERTIFICATION == "FAIRTRADE" ~ ft_cam_vol,
+    CERTIFICATION == "RA" ~ ra_cam_vol,
+    CERTIFICATION == "UTZ" ~ utz_cam_vol
+    )) %>% 
+  select(YEAR, CERTIFICATION, MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES) 
+
+left_join(certified_volume_CAM, certified_disclosures, by = c("YEAR", "CERTIFICATION")) %>%
+  mutate(
+    PERC_SOURCED_PRODUCTION = 100 * MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES / CERTIFIED_PRODUCTION_TONNES,
+    PERC_SOURCED_SOLD = 100 * MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES / SOLD_AS_CERTIFIED_TONNES
+  ) %>%
+  select(YEAR, CERTIFICATION, SOLD = SOLD_AS_CERTIFIED_TONNES, 
+         TRACED = MEAN_TOTAL_SOURCED_DIRECT_VOLUME_TONNES, 
+         PRODUCED = CERTIFIED_PRODUCTION_TONNES, PERC_SOURCED_PRODUCTION
+         ) %>%
+  gather(VARIABLE, VALUE, SOLD:PRODUCED) %>%
+  mutate(
+    FILL = case_when(
+      VARIABLE == "TRACED" ~ "Traced",
+      TRUE ~ "Other"
+    ),
+    FILL = factor(FILL, levels = c("Other", "Traced"))) %>%
+  ggplot(aes(x = VARIABLE, y = VALUE/1000, fill = FILL)) + # , label = LABEL
+  geom_bar(stat = "identity") +
+  # geom_text(y = 20) +
+  facet_wrap(~ CERTIFICATION) +
+  theme_minimal() + 
+  labs(fill = "Trade type")+
+  #scale_fill_manual(values = c("grey", "grey", "darkgreen")) +
+  labs(y = "Certified cocoa volume (1000 tonnes)") +
+  theme(axis.title.x = element_blank(), legend.position = "none",
+        axis.title.y = element_text(angle = 90)) 
+```
+
+How are these volumes spread over the different exporters?
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+certification_analyses %>%
+  unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+  group_by(CERTIFICATION, EXPORTER_GROUP_CLEAN, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(EXPORTER_SOURCED_CERTIFIED_VOLUME_BEQ_TONNES = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+  group_by(CERTIFICATION, EXPORTER_GROUP_CLEAN) %>%
+  summarise(MEAN_EXPORTER_CERTIFIED_DIRECT_VOLUME_BEQ_TONNES =
+              mean(EXPORTER_SOURCED_CERTIFIED_VOLUME_BEQ_TONNES)) %>%
+  left_join(certification_analyses %>%
+              unnest(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution) %>%
+              group_by(CERTIFICATION, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+              summarise(CERTIFICATION_SOURCED_CERTIFIED_VOLUME_BEQ_TONNES = 
+                          sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000) %>%
+              group_by(CERTIFICATION) %>%
+              summarise(MEAN_CERTIFICATION_SOURCED_CERTIFIED_VOLUME_BEQ_TONNES =
+                          mean(CERTIFICATION_SOURCED_CERTIFIED_VOLUME_BEQ_TONNES)),
+            by = "CERTIFICATION"
+              ) %>%
+  mutate(PCT_CERTIFICATION_BY_EXPORTER = MEAN_EXPORTER_CERTIFIED_DIRECT_VOLUME_BEQ_TONNES /
+           MEAN_CERTIFICATION_SOURCED_CERTIFIED_VOLUME_BEQ_TONNES * 100) %>%
+  mutate(EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = ordered_all),
+        CERTIFICATION = factor(CERTIFICATION, levels = c("FAIRTRADE", "RA", "UTZ"))) %>%
+  ggplot() +
+  geom_bar(stat = "identity", aes(fct_rev(EXPORTER_GROUP_CLEAN), 
+                                  PCT_CERTIFICATION_BY_EXPORTER, 
+                                  fill = CERTIFICATION), position = "dodge") +
+  facet_wrap(~ CERTIFICATION) +
+  theme_minimal() + 
+  labs(fill = "Trade type") +
+  #scale_fill_manual(values = c("#F8D7B1", "#C08A5E", "#F85E6E")) +
+  #guides(fill = guide_legend(reverse = TRUE)) + 
+  labs(y = "Proportion of the certified volume handled by exporters (%)") +
+  coord_flip() + 
+  theme(axis.title.y = element_blank(), legend.position = "none")
+```
+
+## 5.2. Proportion of certified cocoa handled per exporter
+
+```{r echo = FALSE, message = FALSE}
+volume_val_exporteroriginal_country_producer %>%
+  mutate(CERTIFICATION = case_when(
+          UTZ == TRUE & FAIRTRADE == TRUE & RA == TRUE ~ "FAIRTRADE + RA + UTZ",
+          UTZ == FALSE & FAIRTRADE == TRUE & RA == TRUE ~ "FAIRTRADE + RA",
+          UTZ == TRUE & FAIRTRADE == TRUE & RA == FALSE ~ "FAIRTRADE + UTZ",
+          UTZ == TRUE & FAIRTRADE == FALSE & RA == TRUE ~ "RA + UTZ",
+          UTZ == FALSE & FAIRTRADE == TRUE & RA == FALSE ~ "FAIRTRADE",
+          UTZ == FALSE & FAIRTRADE == FALSE & RA == TRUE ~ "RA",
+          UTZ == TRUE & FAIRTRADE == FALSE & RA == FALSE ~ "UTZ",
+          TRUE ~ "UNCERTIFIED"
+        )) %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+  group_by(EXPORTER_GROUP_CLEAN, CERTIFICATION, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+  summarise(CERTIFICATION_VOLUME = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ)) %>%
+  right_join(
+    volume_val_exporteroriginal_country_producer %>%
+      unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution)) %>%
+      group_by(EXPORTER_GROUP_CLEAN, NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ) %>%
+      summarise(TOTAL_SOURCED_DIRECT_VOLUME = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ)),
+    by = c("EXPORTER_GROUP_CLEAN", "NUM_COOP_SOURCED_DIRECT_VOLUME_BEQ")
+  ) %>%
+  mutate(CERTIFICATION_PERCENTAGE = CERTIFICATION_VOLUME / TOTAL_SOURCED_DIRECT_VOLUME * 100) %>%
+  group_by(EXPORTER_GROUP_CLEAN, CERTIFICATION) %>%
+  summarise(MEAN_CERTIFICATION_PERCENTAGE = mean(CERTIFICATION_PERCENTAGE)) %>%
+  mutate(EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = ordered_all),
+        CERTIFICATION = factor(CERTIFICATION, levels = c("FAIRTRADE", "RA",  "UTZ", "FAIRTRADE + RA + UTZ",  "FAIRTRADE + RA", "FAIRTRADE + UTZ", "RA + UTZ","UNCERTIFIED"))) %>%
+  ggplot(aes(fct_rev(EXPORTER_GROUP_CLEAN), MEAN_CERTIFICATION_PERCENTAGE, fill = CERTIFICATION)) +
+  geom_bar(stat = "identity", position = position_stack()) +
+  theme_minimal() + 
+  scale_fill_viridis_d() + # Clean this line
+  guides(fill = guide_legend(title = "Trade type")) +           # Add this line
+  labs(x = "Exporter", y = "Proportion of direct trade (%)") +
+  coord_flip() + 
+  theme(panel.background=element_rect(fill="transparent", colour=NA))
+```
+
+-------------------------------------------------------------------------------------------------
+
+# 6. Monetary value
+
+## 6.1. Exporting companies
+
+(Since all entries in the trade data were proportionally divided in traced and untraced proportions, the monetary value of the traced and untraced export is the same.)
+
+```{r include = FALSE}
+### 6.1.1. Traced export
+
+volume_val_exporteroriginal_country_producer %>%
+  unnest(cols = c(COOP_SOURCED_DIRECT_VOLUME_BEQ_distribution,
+                  COOP_SOURCED_DIRECT_VAL_distribution)) %>%
+  group_by(EXPORTER_GROUP_CLEAN, HS6, NUM_COOP_SOURCED_DIRECT_VAL) %>%
+  summarise(EXPORTER_DIRECT_VOLUME_BEQ_TONNE = sum(COOP_SOURCED_DIRECT_VOLUME_BEQ) / 1000,
+            EXPORTER_DIRECT_VAL = sum(COOP_SOURCED_DIRECT_VAL)) %>%
+  mutate(VAL_PER_TONNE = EXPORTER_DIRECT_VAL / EXPORTER_DIRECT_VOLUME_BEQ_TONNE) %>%
+  group_by(EXPORTER_GROUP_CLEAN, HS6) %>%
+  summarise(MEAN_VAL_PER_TONNE = mean(VAL_PER_TONNE)) %>%
+  ungroup() %>%
+  mutate(HS6 = case_when(
+    HS6 == 180100 ~ "180100 - cocoa beans",
+    HS6 == 180310 ~ "180310 - cocoa paste",
+    HS6 == 180400 ~ "180400 - cocoa butter",
+    HS6 == 180500 ~ "180500 - cocoa powder"
+  )) %>%
+  mutate(EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = ordered_all)) %>%
+  filter(EXPORTER_GROUP_CLEAN %in% ordered_traders) %>% 
+
+  ggplot(aes(x = fct_rev(EXPORTER_GROUP_CLEAN), y = MEAN_VAL_PER_TONNE)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  facet_wrap(~HS6, scales = "free") +
+  theme(axis.text.x = element_text(angle= 45, hjust = 1),
+        axis.title.y = element_blank())
+```
+
+```{r include = FALSE, echo=FALSE, message = FALSE}
+### 6.1.2. Total export (of the same companies)
+
+output_summarised %>%
+  filter(EXPORTER_GROUP_CLEAN %in% unique(volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN)) %>%
+  mutate(VAL_PER_TONNE = CIF_USD / (VOLUME_BEAN_EQUIVALENT / 1000)) %>%
+  group_by(EXPORTER_GROUP_CLEAN, HS6) %>%
+  summarise(MEAN_VAL_PER_TONNE = mean(VAL_PER_TONNE)) %>%
+  ungroup() %>%
+  mutate(HS6 = case_when(
+    HS6 == 180100 ~ "180100 - cocoa beans",
+    HS6 == 180310 ~ "180310 - cocoa paste",
+    HS6 == 180400 ~ "180400 - cocoa butter",
+    HS6 == 180500 ~ "180500 - cocoa powder"
+  )) %>%
+  mutate(EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = ordered_all)) %>%
+  filter(EXPORTER_GROUP_CLEAN %in% ordered_traders) %>% 
+
+  ggplot(aes(x = fct_rev(EXPORTER_GROUP_CLEAN), y = MEAN_VAL_PER_TONNE)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  facet_wrap(~HS6, scales = "free") +
+  theme(axis.text.x = element_text(angle= 45, hjust = 1),
+        axis.title.y = element_blank())
+```
+
+```{r echo=FALSE, message = FALSE}
+output_summarised %>%
+  filter(EXPORTER_GROUP_CLEAN %in% unique(volume_val_exporteroriginal_country_producer$EXPORTER_GROUP_CLEAN),
+         VOLUME_BEAN_EQUIVALENT > 0) %>%
+  mutate(BEQ_TONNE = VOLUME_BEAN_EQUIVALENT / 1000,
+         VAL_PER_TONNE = CIF_USD / (BEQ_TONNE),
+         HS6 = case_when(
+    HS6 == "180100" ~ "180100 - cocoa beans",
+    HS6 == "180310" | HS6 == "180320" ~ "180310/180320 - cocoa paste",
+    HS6 == "180400" ~ "180400 - cocoa butter",
+    HS6 == "180500" ~ "180500 - cocoa powder"
+  )) %>%
+  filter(EXPORTER_GROUP_CLEAN %in% ordered_traders) %>% 
+  mutate(EXPORTER_GROUP_CLEAN = factor(EXPORTER_GROUP_CLEAN, levels = rev(ordered_traders))) %>%
+
+  # group_by(EXPORTER_GROUP_CLEAN) %>%
+  # summarise(.by = c(HS6, EXPORTER_GROUP_CLEAN),
+  #           #EXPORTER_GROUP_CLEAN = fct_reorder(EXPORTER_GROUP_CLEAN, VAL_PER_TONNE, .fun='mean'),
+  #           VAL_PER_TONNE = VAL_PER_TONNE) %>%
+  # ungroup() %>%
+  ggplot(aes(x = (EXPORTER_GROUP_CLEAN), y = VAL_PER_TONNE)) +
+  geom_boxplot() +
+  labs(y = "CIF (USD) per tonne of bean equivalent") +
+  coord_flip() +
+  facet_wrap(~HS6, scales = "free") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle= 45, hjust = 1),
+        axis.title.y = element_blank())
+
+```
+
+The Côte d'Ivoire's Conseil du Café Cacao pre-sells a part of the projected harvest beforehand. As such, it fixes the cocoa bean prices and the minimum farm gate price (set as a fixed percentage of the free on board, based on the value of the pre-sale). About 20 % of the price paid by exporters goes to the CCC as tax revenue (see pages 42-45 of [this source](https://documents.worldbank.org/en/publication/documents-reports/documentdetail/735521553488355096/towards-sustainable-agrologistics-in-developing-countries-cocoa-supply-chain-in-cote-d-ivoire)).  
+This price stabilisation by the CCC may be at the basis of the limited variation in cocoa bean CIF.
+
+## 6.2. Importing countries
+
+*How do the volumes and monetary values compare?*
+
+```{r echo = FALSE, message = FALSE}
+# 1. Prepare the Volume Data
+vol_data <- output_summarised %>%
+  left_join(total_volume_val_traded, by = "YEAR") %>%
+  mutate(PERCENTAGE_TOTAL_TRACED = 100 * (VOLUME_BEAN_EQUIVALENT/1000) / TOTAL_VOLUME_TRADED_TONNES) %>%
+  group_by(COUNTRY_OF_DESTINATION) %>%
+  summarise(PERCENTAGE_TOTAL_TRACED = sum(PERCENTAGE_TOTAL_TRACED)) %>%
+  filter(PERCENTAGE_TOTAL_TRACED > 1) %>%
+  arrange(-PERCENTAGE_TOTAL_TRACED) %>%
+  mutate(PERCENTAGE_TOTAL_TRACED = format(PERCENTAGE_TOTAL_TRACED, digits = 2, nsmall = 2, scientific = FALSE)) %>%
+  mutate(Rank = row_number()) # Add a ranking column for joining
+
+# 2. Prepare the Value Data
+val_data <- output_summarised %>%
+  left_join(total_volume_val_traded, by = "YEAR") %>%
+  mutate(PERCENTAGE_TOTALVAL_TRACED = 100 * CIF_USD / TOTAL_VAL_TRADED) %>%
+  group_by(COUNTRY_OF_DESTINATION) %>%
+  summarise(PERCENTAGE_TOTALVAL_TRACED = sum(PERCENTAGE_TOTALVAL_TRACED)) %>%
+  filter(PERCENTAGE_TOTALVAL_TRACED > 1.05) %>%
+  arrange(-PERCENTAGE_TOTALVAL_TRACED) %>%
+  rename(COUNTRY_of_destination = COUNTRY_OF_DESTINATION) %>%
+  mutate(PERCENTAGE_TOTALVAL_TRACED = format(PERCENTAGE_TOTALVAL_TRACED, digits = 2, nsmall = 2, scientific = FALSE)) %>%
+  mutate(Rank = row_number()) # Add a ranking column for joining
+
+# 3. Join them by Rank and Create Table
+vol_data %>%
+  full_join(val_data, by = "Rank") %>% # Join keeps all rows from both sides
+  select(-Rank) %>% # Remove the helper rank column
+  mutate(across(everything(), ~ ifelse(is.na(.), "", .))) %>% # Replace NAs with empty strings for the shorter list
+  kable(
+    col.names = c("Importing country", "Percentage of total exported volume",
+                  "Importing country", "Percentage of total exported value"),
+    caption = "Percentage of the total exported volume and value imported by individual countries, showing only those that imported at least 1% of the total export",
+    align = c("l","r","l","r")
+  ) %>%
+  add_header_above(c("Cocoa volume" = 2, "Cocoa monetary value" = 2)) %>%
+  kable_paper(full_width = F)
+```
+
+jumps:UK-Canada, Estonia-Indonesia
+
+Are there differences in monetary value paid by different importing countries?
+
+```{r include = FALSE, echo=FALSE, message = FALSE}
+output_summarised %>%
+  filter(VOLUME_BEAN_EQUIVALENT > 0) %>%
+  mutate(VAL_PER_TONNE = CIF_USD / (VOLUME_BEAN_EQUIVALENT / 1000)) %>%
+ 
+  mutate(HS6 = case_when(
+    HS6 == "180100" ~ "180100 - cocoa beans",
+    HS6 == "180310" | HS6 == "180320" ~ "180310/180320 - cocoa paste",
+    HS6 == "180400" ~ "180400 - cocoa butter",
+    HS6 == "180500" ~ "180500 - cocoa powder"
+  )) %>%
+  
+  group_by(COUNTRY_OF_DESTINATION, HS6) %>%
+  summarise(MEAN_VAL_PER_TONNE = mean(VAL_PER_TONNE)) %>%
+  ungroup() %>%
+  mutate(COUNTRY_OF_DESTINATION = factor(COUNTRY_OF_DESTINATION, levels = ordered_countries)) %>%
+  ggplot(aes(x = fct_rev(COUNTRY_OF_DESTINATION), y = MEAN_VAL_PER_TONNE)) +
+  labs(y = "Mean CIF (USD) per tonne") +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  facet_wrap(~HS6, scales = "free") +
+  theme(axis.text.x = element_text(angle= 45, hjust = 1),
+        axis.title.y = element_blank(), axis.text.y = element_text(size = 6))
+```
+
+```{r echo=FALSE, message = FALSE}
+output_summarised %>%
+  filter(VOLUME_BEAN_EQUIVALENT > 0) %>%
+  mutate(BEQ_TONNE = VOLUME_BEAN_EQUIVALENT / 1000,
+         VAL_PER_TONNE = CIF_USD / (BEQ_TONNE),
+         HS6 = case_when(
+    HS6 == "180100" ~ "180100 - cocoa beans",
+    HS6 == "180310" | HS6 == "180320" ~ "180310/180320 - cocoa paste",
+    HS6 == "180400" ~ "180400 - cocoa butter",
+    HS6 == "180500" ~ "180500 - cocoa powder"
+  )) %>%
+  mutate(COUNTRY_OF_DESTINATION = factor(COUNTRY_OF_DESTINATION, levels = ordered_countries),
+        #COUNTRY_OF_DESTINATION = fct_reorder(COUNTRY_OF_DESTINATION, VAL_PER_TONNE, .fun='mean')
+    ) %>%
+  ggplot(aes(x = fct_rev(COUNTRY_OF_DESTINATION), y = VAL_PER_TONNE)) +
+  geom_boxplot() +
+  labs(y = "CIF (USD) per tonne") +
+  coord_flip() +
+  facet_wrap(~HS6, scales = "free") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle= 45, hjust = 1),
+        axis.title.y = element_blank(), axis.text.y = element_text(size = 6))
+
+```
+
+## 6.3. Certified vs Uncertified
+
+Since all entries in the trade data were spread over all cooperatives linked to each trader respectively (i.e. each shipment was linked to all cooperatives linked to the trader, irrespective of whether or not they were certified or not; we did not link specific shipments to specific cooperatives), it is not possible at this point to compare the monetary value of certified and uncertified cocoa. 
+
+-------------------------------------------------------------------------------------------------
+
+# 8. Extra information
+
+-------------------------------------------------------------------------------------------------
+
+**Indirect sourcing per department** (i.e. the proportion of the production that is left after substracting all directly traced cocoa)
+
+```{r echo = FALSE, message = FALSE}
+
+ggplot() +
+  geom_sf(data = civ_departments,
+          fill = trase_country_background,
+          col = trase_map_border) +
+  geom_sf(data = st_as_sf(production_surplus_pg %>%
+                    mutate(PROP_INDIRECT_SOURCING = 100 * PRODUCTION_SURPLUS_TONNES / COCOA_PRODUCTION_TONNES) %>%
+                    group_by(GEOCODE) %>%
+                    summarise(MEAN_PROP_INDIRECT_SOURCING = mean(PROP_INDIRECT_SOURCING)) %>%
+  full_join(civ_departments, by = c("GEOCODE" = "LVL_4_CODE"))),
+          aes(fill = MEAN_PROP_INDIRECT_SOURCING), 
+          col = NA) +
+  theme_minimal() +
+  theme(legend.spacing.y = unit(0.2, "cm")) +
+  coord_sf(datum = NA) +
+  scale_fill_viridis(option="magma",
+                     name = bquote('Proportion of\nindirect sourcing'),
+                     direction = -1) +
+  guides(col=guide_legend(title=NULL),
+         fill = guide_colourbar(ticks = FALSE))
+```
+
+_NOTE: this was set as 0 for those departments where sourcing surpassed production._
+
+-------------------------------------------------------------------------------------------------
+
+**A map of the departments of the Côte d'Ivoire and their names:**
+
+```{r department names map, echo = FALSE}
+#you can actually see things when you open the plot in a new window
+ggplot(civ_departments) +
+  geom_sf(aes(fill = LVL_4_CODE)) +
+  geom_sf_label(aes(label = LVL_4_NAME), size = 2) +
+  theme_minimal() + 
+  scale_fill_viridis_d() +
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.background = element_blank()) +
+  coord_sf(datum = NA)
+```
+
