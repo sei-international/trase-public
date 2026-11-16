@@ -1,0 +1,10 @@
+# results and temporary files
+output/
+__pycache__/
+*.pyc
+.Rhistory
+.Rproj.user/
+.DS_Store
+# reports rendered from .Rmd files
+*.html
+*_files/

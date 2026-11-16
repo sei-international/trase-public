@@ -1,0 +1,2 @@
+order;pattern;value;comment
+1;EXAMPLE TRADING|EXAMPLE TRDG|EXMPL TRADING;EXAMPLE TRADING;replace with real rules. First matching rule wins. Patterns are regular expressions.

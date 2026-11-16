@@ -1,0 +1,175 @@
+---
+title: "Production per cocoa farm estimates based on KIT study"
+author: "Mathil Vandromme"
+date: "29-9-2020"
+output: html_document
+---
+
+<!--
+farm-level cocoa production from the KIT survey.
+The model only uses one output of this script: farm_survey/kit_farm_production.csv
+(total cocoa production in kg for each surveyed farm in Côte d'Ivoire).
+The KIT data are public: Tyszler, Bymolt & Laven (2018), Harvard Dataverse,
+https://doi.org/10.7910/DVN/82TWZJ. Download the .RData file from there and put
+it at <DATA_DIR>/farm_survey/0 Cocoa_Livelihoods_export_Dataverse.RData
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(readxl)
+library(sf)
+# Render with the toolkit's top folder as knit root:
+#   rmarkdown::render("input_preparation/farm_production/farm_production_from_kit_survey.Rmd", knit_root_dir = getwd())
+source(file.path("input_preparation", "setup.R"))
+
+```
+
+*Still need to decide which metric is most relevant to use!* -> probably the most logical to use the 442 observations of farm yields
+
+
+Here we use data from the KIT study **Demystifying the cocoa sector in Ghana and Côte d’Ivoire** to produce estimates of cocoa production per farm, for CIV.
+The KIT study is a survey of 3000 cocoa farms in CIV and GH, here we use only the information from the CIV farms.
+To refer to the original data, use the following:
+Tyszler, Marcelo; Bymolt, Roger; Laven, Anna, 2018, "Demystifying the cocoa sector in Ghana and Côte d’Ivoire", https://doi.org/10.7910/DVN/82TWZJ, Harvard Dataverse, V2, UNF:6:bKsOmmVySdVxa8Ksq2ajHQ
+
+
+
+Use the .RData version of the KIT data: the xlsx and tab versions contain different numbers of observations, and decimal signs can be lost when loading them.
+
+```{r Loading KIT data, include=FALSE}
+
+# Load the Dataverse .RData file from the local data folder.
+# It contains one data frame, called `table` below.
+kit_env <- new.env()
+load(require_input(input_path("farm_survey", "0 Cocoa_Livelihoods_export_Dataverse.RData")), envir = kit_env)
+table <- get(ls(kit_env)[1], envir = kit_env)
+
+kit <- table %>%
+  filter(country == 2) %>%
+  select(sub_region, latitude, longitude, cocoa_land_used_ha, cocoa_land_used_morethan5_ha,
+         cocoa_prod_total_kgs, cocoa_prod_total_kgsha)
+
+#sense check: does the amount of observations agree with what mentioned in the KIT study
+#count(kit, vars = "cocoa_land_used_ha")$n - sum(is.na(kit$cocoa_land_used_ha))
+#788 -> correct
+#count(kit, vars = "cocoa_prod_total_kgs")$n - sum(is.na(kit$cocoa_prod_total_kgs))
+#422 -> correct
+
+```
+
+Create a distribution of 1000 yield/farm values using random sample selection from cocoa_land_used_ha and cocoa_prod_total_kgs
+What we need is 1000 randomly selected cocoa_prod_total_kgs and 1000 randomly selected cocoa_land_used_ha
+We then divide the 1000 production values by the 1000 farm size values to get 1000 yield/farm values.
+
+```{r}
+#prod_sample <- sample(kit$cocoa_prod_total_kgs[!is.na(kit$cocoa_prod_total_kgs)], replace =T, size = 1000)
+#size_sample <- sample(kit$cocoa_land_used_ha[!is.na(kit$cocoa_land_used_ha)], replace =T, size = 1000)
+
+#yield_per_farm <- prod_sample / size_sample
+
+#range(yield_per_farm)
+# 0  to 17792 kg
+```
+
+Figured out that that doesn't really make sense as it allows to have humongous yield on a small farm; when the yield data from a big farm is divided by the size data of a small farm.
+That is not a true representation of the potential yield levels.
+It would make more sense to use yield/ha and multiply by ha.
+
+-> the variable "cocoa_prod_total_kgsha" gives yield/ha, but only for the amount of ha with cocoa older than 5 years (assuming that only that cocoa is productive), therefore we need to use "cocoa_land_used_morethan5_ha" rather than "cocoa_land_used_ha".
+In this sense, we get a yield per farm based on only productive cocoa plantation, it ignores non-productive plantations. Comparison with estimated land area under cocoa production may be limited, as this would create an overestimate of production by assuming the complete area under cocoa production is productive.
+
+```{r calculate productive farm yield estimates}
+prod_productive_area_sample <- sample(kit$cocoa_prod_total_kgsha[!is.na(kit$cocoa_prod_total_kgsha)], replace =T, size = 1000)
+size_productive_area_sample <- sample(kit$cocoa_land_used_morethan5_ha[!is.na(kit$cocoa_land_used_morethan5_ha)], replace =T, size = 1000)
+
+yield_productive_farm <- prod_productive_area_sample * size_productive_area_sample
+
+```
+
+If we would still want to take into account the complete area under production, we can actually just use the metric kit$cocoa_prod_total_kgs which gives the total yield for the complete farm (productive and unproductive area)
+
+```{r calculate complete farm yield estimates}
+# farm_level_estimates below needs this object
+yield_total_farm <- sample(kit$cocoa_prod_total_kgs[!is.na(kit$cocoa_prod_total_kgs)], replace =T, size = 1000)
+
+#it actually doesn't make so much sense to create a sample of 1000 out of 442 observations -> more logical to just use the set of 442 observations themselves for further calculations
+
+kit_farm_yield_observations <- kit %>%
+  select(cocoa_prod_total_kgs, cocoa_prod_total_kgsha) %>%
+  filter(cocoa_prod_total_kgs >= 0)
+
+
+```
+
+
+how do these compare? (will be slightly different when rerunning the script)
+```{r, eval = FALSE}
+# (exploratory comparison; relies on objects from commented-out code above)
+plot(sort(yield_total_farm), sort(yield_productive_farm), abline(0,1))
+#yield total farm < yield productive farm 
+#because estimated production levels per ha so much smaller than what can be balanced out with larger areas?
+
+mean(yield_total_farm) # 1182.364 
+mean(yield_productive_farm) # 1297.969
+range(yield_total_farm) # 0 10000
+range(yield_productive_farm) # 0.00 12083.33
+
+plot(sort(prod_total_farm_sample), sort(prod_productive_area_sample), abline(0,1))
+# production/area total farm < production/area productive farm area 
+plot(sort(size_total_farm_sample), sort(size_productive_area_sample), abline(0,1))
+# total farm size > productive farm size
+
+```
+
+Combine these factors into a dataframe.
+Export
+```{r combine and export}
+
+farm_level_estimates <- data.frame(prod_productive_area_sample, 
+                                   size_productive_area_sample,
+                                   yield_productive_farm,
+                                   yield_total_farm)
+
+write_delim(farm_level_estimates, input_path("farm_survey", "kit_farm_level_estimates.csv"), delim = ";")
+
+# >>> THIS is the file the model uses <<<
+write_delim(kit_farm_yield_observations, input_path("farm_survey", "kit_farm_production.csv"), delim = ";")
+
+```
+
+
+How representative are the KIT farms with production data? How are they distributed over the country?
+
+```{r map of kit farms}
+#load geographical data
+civ_departments <-
+  read_sf(require_input(input_path("regions", "departments.geojson")))
+civ_departments <-civ_departments %>%  
+  dplyr::select(LVL_4_NAME, LVL_4_CODE, geometry)
+
+#give kit and department data the same planar coordinate system
+civ_departments$geometry <- st_transform(civ_departments$geometry, crs = 3857)
+
+kit_production_data <- kit  %>%
+  filter(cocoa_prod_total_kgs >= 0) 
+kit_production_data <- st_as_sf(kit_production_data, coords = c("longitude","latitude"), na.fail=FALSE, crs = 4326)
+kit_production_data <- st_transform(kit_production_data, crs = 3857)
+
+#plot departments, add KIT data points with size representing yield
+ggplot(civ_departments) + 
+  geom_sf(data = civ_departments$geometry)+
+  theme_minimal() +
+  geom_sf(data=kit_production_data$geometry, aes(size = kit_production_data$cocoa_prod_total_kgs,
+                                                 colour = kit_production_data$cocoa_prod_total_kgs)) +
+  coord_sf(datum = NA)
+
+```
+
+
+
+
+
+
+
+

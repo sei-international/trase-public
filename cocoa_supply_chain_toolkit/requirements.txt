@@ -1,0 +1,9 @@
+# Python packages for the supplier map and the Earth Engine post-processing.
+# Install with:  python3 -m pip install -r requirements.txt
+pandas>=2.0
+numpy
+geopandas
+shapely
+openpyxl          # reading and writing .xlsx files
+fuzzywuzzy        # fuzzy matching of cooperative names
+python-Levenshtein  # makes fuzzywuzzy faster (optional)

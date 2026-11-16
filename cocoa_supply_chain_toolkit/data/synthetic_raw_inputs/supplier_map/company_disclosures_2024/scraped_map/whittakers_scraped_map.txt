@@ -1,0 +1,9 @@
+<marker op="Asankrangwa" village="Village0Asa" growers="61" harvest="4,622" />
+<marker op="Asankrangwa" village="Village1Asa" growers="47" harvest="5,137" />
+<marker op="Asankrangwa" village="Village2Asa" growers="24" harvest="7,871" />
+<marker op="Tarkwa-Huni" village="Village0Tar" growers="37" harvest="1,126" />
+<marker op="Tarkwa-Huni" village="Village1Tar" growers="74" harvest="4,341" />
+<marker op="Tarkwa-Huni" village="Village2Tar" growers="70" harvest="5,491" />
+<marker op="Assin" village="Village0Ass" growers="26" harvest="3,792" />
+<marker op="Assin" village="Village1Ass" growers="66" harvest="4,246" />
+<marker op="Assin" village="Village2Ass" growers="64" harvest="1,984" />
