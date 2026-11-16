@@ -48,7 +48,7 @@ Rscript results_by_exporter_and_destination.R   # summary tables
 
 `run_model.R` writes two tables: the supply chains (`supply_chains_cote_divoire_2024.csv`) and the same rows with their cocoa deforestation and degradation, emissions and cocoa land (`..._with_deforestation.csv`). `results_by_exporter_and_destination.R` sums them per exporter, importing country and region.
 
-> **All example data are made up.** They have the real file structure, but the cooperatives, shipments and numbers are fictional, so results from them mean nothing. The one real file is the department boundary file, which is public.
+> **All example data are made up.** They have the real file structure, but the cooperatives, shipments and numbers are fictional, so results from them mean nothing. The one real file is the department boundary file, which comes from geoBoundaries under a CC BY 3.0 IGO licence (see `data/synthetic_cote_divoire/regions/SOURCE.md`).
 
 ## What you can run
 

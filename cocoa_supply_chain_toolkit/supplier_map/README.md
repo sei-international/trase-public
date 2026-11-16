@@ -53,7 +53,7 @@ python3 supplier_map/build_supplier_map_cote_divoire_2024.py --data-dir <folder>
 python3 supplier_map/build_supplier_map_cote_divoire_2024.py --data-dir <folder> --from-step 4
 ```
 
-It needs the companies' disclosures in `<folder>/supplier_map/company_disclosures_2024/` and last year's map in `<folder>/supplier_map/last_year/`. Without `--data-dir` it uses the fake ones in `data/synthetic_raw_inputs/` (see `data/README.md`), so you can run it straight away and look at the files each step writes in `data/synthetic_raw_inputs/supplier_map/work/`:
+It needs the companies' disclosures in `<folder>/supplier_map/company_disclosures_2024/` and last year's map in `<folder>/supplier_map/last_year/`. Without `--data-dir` it uses the fake ones in `data/synthetic_raw_inputs/` (see `data/README.md`). Their file names start with `SYNTHETIC_`; the script reads a file under its original name if it exists, and otherwise the `SYNTHETIC_` copy, so you can run it straight away and look at the files each step writes in `data/synthetic_raw_inputs/supplier_map/work/`:
 
 ```bash
 python3 supplier_map/build_supplier_map_cote_divoire_2024.py

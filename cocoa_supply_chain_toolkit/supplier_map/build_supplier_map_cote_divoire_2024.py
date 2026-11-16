@@ -45,6 +45,18 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # for supplier_map_tools
 
+def input_file(path):
+    """Return `path`, or the example copy named SYNTHETIC_<file name> next to it.
+
+    The worked example ships made-up disclosures whose file names start with
+    SYNTHETIC_. When you add the real files under their original names, those
+    are used instead.
+    """
+    if os.path.exists(path):
+        return path
+    synthetic = os.path.join(os.path.dirname(path), "SYNTHETIC_" + os.path.basename(path))
+    return synthetic if os.path.exists(synthetic) else path
+
 
 def step1_standardise_disclosures(DATA_DIR):
     """Read each company's supplier disclosure and reshape them all into one column format."""
@@ -106,7 +118,7 @@ def step1_standardise_disclosures(DATA_DIR):
     import ast
     import pandas as pd
 
-    fp = f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/blommer_map_scraped.txt"
+    fp = input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/blommer_map_scraped.txt")
 
     with open(fp, "r") as file:
         text = file.read()
@@ -145,7 +157,7 @@ def step1_standardise_disclosures(DATA_DIR):
     import pandas as pd
     import re
 
-    fp = f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/touton_map_scraped.txt"
+    fp = input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/touton_map_scraped.txt")
 
     with open(fp, "r") as file:
         text = file.read()
@@ -176,7 +188,7 @@ def step1_standardise_disclosures(DATA_DIR):
     for name, lat, lon in results:
         print(f"{name}, {lat},{lon}")
 
-    df = pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/touton_map_as_csv.csv")
+    df = pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/touton_map_as_csv.csv"))
 
     columns = [
         "DISCL_COUNTRY_NAME",
@@ -204,7 +216,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     import geopandas as gpd
 
-    df = gpd.read_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/cargill_coops_2324.geojson")
+    df = gpd.read_file(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/cargill_coops_2324.geojson"))
 
     df.year_joined.max()
 
@@ -226,7 +238,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     # # Tabula outputs
 
-    df= pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-cote-d-ivoire-ofi-sustainable-cocoa-suppliers-2023-and-2024.csv")
+    df= pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-cote-d-ivoire-ofi-sustainable-cocoa-suppliers-2023-and-2024.csv"))
 
     df["DISCL_YEAR"] = 2024
     df["DISCL_SUPPLIER_TYPE"] = "Cooperative"
@@ -238,7 +250,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_OFI.csv", index=False)
 
-    df = pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/ecom/ecom_CIV.csv")
+    df = pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/ecom/ecom_CIV.csv"))
 
     df.rename(columns={
         "Cooperative Name": "DISCL_SUPPLIER_ABRVNAME",
@@ -253,7 +265,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_ecom.csv", index=False)
 
-    df= pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-etg 2024.csv")
+    df= pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-etg 2024.csv"))
     df.rename(columns={
         "Country": "COUNTRY",
         "Supplier Name": "DISCL_SUPPLIER_ABRVNAME",
@@ -267,7 +279,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_etg.csv", index=False)
 
-    df= pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-ferrero-cocoa-suppliers-list-23-24.csv")
+    df= pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-ferrero-cocoa-suppliers-list-23-24.csv"))
 
     df.rename(columns={
         "LOCATION ORIGIN": "COUNTRY",
@@ -282,7 +294,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_ferrero.csv", index=False)
 
-    df= pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-2023 T2 MARS COCOA SUPPLY CHAIN DISCLOSURE -Jan 2024 FINAL-3.csv")
+    df= pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-2023 T2 MARS COCOA SUPPLY CHAIN DISCLOSURE -Jan 2024 FINAL-3.csv"))
 
     df.drop(columns=["INDEX"], inplace=True)
 
@@ -292,7 +304,7 @@ def step1_standardise_disclosures(DATA_DIR):
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2023_mars_fromlist.csv", index=False)
 
-    df= pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-nestle_2025_responsible-sourcing-disclosure-cocoa.csv")
+    df= pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/tabula_outputs/tabula-nestle_2025_responsible-sourcing-disclosure-cocoa.csv"))
 
     df.drop(columns=["Intermediary Supplier Location (Country)"], inplace=True)
     df.rename(columns={
@@ -311,7 +323,7 @@ def step1_standardise_disclosures(DATA_DIR):
     import re
 
     data = []
-    with open(f'{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/whittakers_scraped_map.txt', 'r', encoding='utf-8') as f:
+    with open(input_file(f'{DATA_DIR}/supplier_map/company_disclosures_2024/scraped_map/whittakers_scraped_map.txt'), 'r', encoding='utf-8') as f:
         for line in f:
             # Remove whitespace and skip empty lines
             line = line.strip()
@@ -433,9 +445,9 @@ def step1_standardise_disclosures(DATA_DIR):
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_valrhona.csv", index=False)
 
-    df = pd.read_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_ritter_sport.csv")
+    df = pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_ritter_sport.csv"))
 
-    df = pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/excel/2024_transparance.csv")
+    df = pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/excel/2024_transparance.csv"))
 
     df.rename(columns={
         "SUPPLIER": "DISCL_SUPPLIER_ABRVNAME",
@@ -445,7 +457,7 @@ def step1_standardise_disclosures(DATA_DIR):
     df.drop(columns=["N"], inplace=True)
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_transparance.csv", index=False)
 
-    df = pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/excel/2024_lindt_sprungli.csv")
+    df = pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/excel/2024_lindt_sprungli.csv"))
 
     df.rename(columns={
         "Country": "DISCL_COUNTRY",
@@ -461,7 +473,7 @@ def step1_standardise_disclosures(DATA_DIR):
     import pandas as pd
     import numpy as np
 
-    df = pd.read_excel(f"{DATA_DIR}/supplier_map/company_disclosures_2024/excel/alter_eco_sourcing_2018-2024.xlsx")
+    df = pd.read_excel(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/excel/alter_eco_sourcing_2018-2024.xlsx"))
 
     df.to_csv(f"{DATA_DIR}/supplier_map/work/step1_by_company/2024_alter_eco.csv", index=False)
 
@@ -495,7 +507,7 @@ def step1_standardise_disclosures(DATA_DIR):
     dataframes = []
 
     # Iterate through each file in the folder
-    for fn in os.listdir(folder_path):
+    for fn in sorted(os.listdir(folder_path)):
         print(fn)
         if fn.endswith('.csv'):  # Check if the file is a CSV
             file_path = os.path.join(folder_path, fn)
@@ -1519,11 +1531,12 @@ def step3_clean_match_and_locate(DATA_DIR):
     # Make sure Cocoasource is the trader for Tony's (only for rows from the earlier map)
     df.loc[df['COMPANY'].str.contains("TONY", case=False, na=False) & df['IS_CAM_V3'], 'TRADER_NAME'] = "COCOASOURCE"
 
-    # Remove names of traders identified as making disclosures but which volumes spotted in customs data do not reflect total sourcing from Ivory Coast.
-    # Note: this information is still available in DISCL_TRADER_NAME!
-
-    # AND REMOVE ECOOKIM AS WELL: treat Ecookim as a source of information, not as a trader.
-    # Remove COMPANY values for those identified as making disclosures, but for which volumes in customs data do not reflect total sourcing.
+    # Companies that publish supplier lists but do not export cocoa themselves
+    # (brands, retailers, certifiers, and the ECOOKIM union, which is used as a
+    # source of information rather than as a trader). Their names stay in
+    # DISCL_TRADER_NAME, but they are removed from COMPANY so they are not
+    # treated as exporters. Check this list against your own trade data: a
+    # company belongs here if it exports little or nothing under its own name.
 
     non_trading_companies = [
         "ALBERT HEIJN", "ALFRED RITTER", "ALTER ECO",
@@ -1538,17 +1551,9 @@ def step3_clean_match_and_locate(DATA_DIR):
     import numpy as np
     df.loc[df['COMPANY'].isin(non_trading_companies) & df['IS_CAM_V3'], 'COMPANY'] = np.nan
 
-    # --- Code to check their volumes in customs data (commented out, for reference) ---
-    # for pot_trad in sorted(df['COMPANY'].dropna().unique()):
-    #     vol_tonnes = trade_data[
-    #         (trade_data['EXPORTER_GROUP_CLEAN'] == pot_trad) | (trade_data['IMPORTER_GROUP_CLEAN'] == pot_trad)
-    #     ]['BEAN_EQUIVALENT_VOLUME'].sum() / 1000
-    #     print(f"{pot_trad}: {vol_tonnes} MT")
-    # Companies found to have 0 volume are not traders. Then, it's case investigation.
-    # Blommer & Hershey, see above.
-    # Ferrero sources more than 200k MT in total, so it's unlikely that the 1626.6 MT found here in customs data reflect all its sourcing.
-    # Ethiquable: LEAVE IT AS A TRADER, as it is actually possible that they source 150 MT, since they say they sourced 40 MT in 2014.
-    # Note: Ethiquable buys from ECOOKIM in customs data, so it won't appear in sankey eventually.
+    # To check a company, total its export volume in the trade data, e.g.
+    # trade[(trade.EXPORTER_GROUP == name)]['BEAN_EQUIVALENT_KG'].sum() / 1000
+    # and compare it with the volume it reports sourcing from the country.
 
     #df.to_csv('2024_coops.csv', index=False)
 
@@ -1801,7 +1806,7 @@ def step4_build_supplier_tables(DATA_DIR):
     # Add Mars' 2024 update: cooperatives not yet listed for Mars become new
     # rows (short name only; region and full name are filled from last year's
     # map below, as for the other rows)
-    mars_24 = pd.read_csv(f"{DATA_DIR}/supplier_map/company_disclosures_2024/mars_2024_update.csv")
+    mars_24 = pd.read_csv(input_file(f"{DATA_DIR}/supplier_map/company_disclosures_2024/mars_2024_update.csv"))
     for col in mars_24.columns:
         if pd.api.types.is_string_dtype(mars_24[col]):
             mars_24[col] = mars_24[col].str.replace('"', '', regex=False).str.strip()

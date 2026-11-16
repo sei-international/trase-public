@@ -34,7 +34,7 @@ Check each item before investing in the rest. If supplier disclosures or customs
 | **Supplier disclosures**: which cooperatives each trader or chocolate maker buys from, ideally with farmer numbers and coordinates | Company sustainability reports and supplier lists, online supplier maps, certification registers | Direct sourcing (the traced share) |
 | **Supplier locations**: coordinates, or a place name you can match to a region | The disclosures themselves; national cooperative registers; earlier mapping projects | Assigning suppliers to regions |
 | **Farm production survey**: annual cocoa production per farm for a representative sample | National or research farm surveys | Turning farmer numbers into volumes |
-| **Regions**: boundaries and codes of the sub-national units | National statistics office; GADM (https://gadm.org) | Everything spatial |
+| **Regions**: boundaries and codes of the sub-national units | National statistics office; geoBoundaries (https://www.geoboundaries.org, open licences) or HDX (https://data.humdata.org). GADM (https://gadm.org) is also widely used, but its licence does not allow redistribution, so don't publish GADM-derived files | Everything spatial |
 | **Licensed buyers or intermediaries register** (optional) | Cocoa regulator | Extra direct links |
 | **Cocoa map**: where cocoa is grown, ~10 m resolution | See `DEFORESTATION_METRICS.md` | Cocoa deforestation, cocoa area, production per region |
 | **Regional production** | Official statistics, or national total × cocoa area × suitability (Earth Engine section C) | Deforestation per tonne; where untraced cocoa comes from |
