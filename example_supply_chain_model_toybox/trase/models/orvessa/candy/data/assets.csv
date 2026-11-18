@@ -1,0 +1,36 @@
+identifier;name;municipality;level;company
+100001;Farm_Green1;102;1;Green (100)
+100002;Silo_Green1;102;2;Green (100)
+100003;Farm_Green2;103;1;Green (100)
+100004;Silo_Green2;103;2;Green (100)
+100005;Fact_Green1;301;3;Green (100)
+100006;Fact_Green2;302;3;Green (100)
+200001;Farm_Red1;201;1;Red (200)
+200002;Farm_Red2;202;1;Red (200)
+200003;Silo_Red1;202;2;Red (200)
+200004;Fact_Red1;202;3;Red (200)
+300001;Farm_Black1;104;1;Black (300)
+300002;Silo_Black1;104;2;Black (300)
+300003;Farm_Black2;203;1;Black (300)
+300004;Fact_Black1;301;3;Black (300)
+123001;Farm;101;1;Comp_123
+124001;Farm;101;1;Comp_124
+125001;Silo;101;2;Comp_125
+126001;Factory;101;3;Comp_126
+127001;Farm;102;1;Comp_127
+128001;Farm;102;1;Comp_128
+129001;Factory;102;3;Comp_129
+130001;Silo;103;2;Comp_130
+131001;Farm;104;1;Comp_131
+132001;Silo;201;2;Comp_132
+133001;Farm;201;1;Comp_133
+134001;Farm;202;1;Comp_134
+135001;Farm;203;1;Comp_135
+136001;Farm;301;1;Comp_136
+137001;Farm;302;1;Comp_137
+138001;Silo;302;2;Comp_138
+139001;Factory;303;3;Comp_139
+140001;Silo;303;2;Comp_140
+166001;Office;102;5;Comp_166
+167001;Office;203;5;Comp_167
+168001;Office;301;5;Comp_168
