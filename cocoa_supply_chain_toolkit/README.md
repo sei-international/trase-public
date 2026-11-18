@@ -1,5 +1,7 @@
 # Cocoa supply chains and deforestation: toolkit
 
+Disclaimer: This is a simplified and adapted version of Trase's cocoa supply chain mapping code, designed for ease-of-use by the public. Please note that the internal Trase code has differences. Also note that we do not use the same supply chain mapping methods between commodities and countries. Get an overview of Trase methodologies here: https://trase.earth/methodology 
+
 This toolkit links a country's cocoa exports to the sub-national regions and cooperatives they were sourced from, and measures the deforestation linked to cocoa in each region. It follows the method [Trase](https://trase.earth) developed for Côte d'Ivoire, and is set up so it can be applied to another country (for example Cameroon or Nigeria).
 
 It has three parts:
