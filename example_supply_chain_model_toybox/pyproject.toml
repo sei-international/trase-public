@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orvessa-toybox"
+version = "1.0.0"
+description = "A self-contained toy supply-chain model (Orvessa) for learning SEI-PCS supply-chain mapping."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "pandas>=2.2,<3",   # pandas 3 changes string dtypes, which the ETL tool rejects
+    "numpy>=1.26,<3",
+    "scipy>=1.11",
+    "pulp>=2.8,<3",     # PuLP 3 removed PULP_CBC_CMD, the bundled solver we use
+    "more-itertools",
+    "python-slugify",
+    "termcolor",
+    "toposort",
+    "unidecode",
+]
+
+[project.optional-dependencies]
+notebook = ["jupyterlab", "plotly"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["trase*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.csv", "*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

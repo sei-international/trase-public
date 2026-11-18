@@ -1,0 +1,12 @@
+# Exact versions this toybox was tested with (Python 3.13).
+# Install with:  pip install -r requirements.txt
+pandas==2.3.3
+numpy==2.2.6
+scipy==1.14.1
+pulp==2.8.0
+more-itertools
+python-slugify
+termcolor
+toposort
+unidecode
+pytest
