@@ -15,6 +15,12 @@ This repository contains copies of some of the code used by **[Trase](https://tr
 We are always looking to improve our workflows. If you find a bug, have a feature request, or want to contribute:
 * **Feedback:** Reach out to us directly via our [Contact Us page](https://trase.earth/contact-us).
 * **Contributions:** Feel free to open an issue or submit a pull request in this repository.
+* **Before your first commit:** set up the [pre-commit](https://pre-commit.com) hooks, which scan for secrets with [gitleaks](https://github.com/gitleaks/gitleaks) and block OS files such as `.DS_Store`. The same checks run in CI on every push and pull request.
+  ```bash
+  pip install pre-commit
+  pre-commit install
+  ```
+* **Security:** please report security problems or accidentally published credentials privately. See [SECURITY.md](SECURITY.md).
 
 ---
 ## Terms of Use
